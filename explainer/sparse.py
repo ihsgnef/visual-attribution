@@ -25,7 +25,8 @@ class SparseExplainer(object):
             hessian_delta_vp, = torch.autograd.grad(
                     (inp_grad @ delta).sum(), inp, create_graph=True)
             taylor_1 = (inp_grad @ delta).sum()
-            taylor_2 = 0.5 * (delta.t() @ hessian_delta_vp).sum()
+            # shape here needs more though
+            taylor_2 = 0.5 * (delta @ hessian_delta_vp).sum()
             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
             loss = - taylor_1 - self.lambda_t2 * taylor_2
