@@ -2,7 +2,7 @@ import numpy as np
 from torch.autograd import Variable, Function
 import torch
 import types
-
+from sparse import SparseExplainer
 
 class VanillaGradExplainer(object):
     def __init__(self, model):
@@ -56,6 +56,23 @@ class IntegrateGradExplainer(VanillaGradExplainer):
 
         return grad * inp_data / self.steps
 
+
+class SparseIntegrateGradExplainer(VanillaGradExplainer):
+    def __init__(self, model, steps=100):
+        super(IntegrateGradExplainer, self).__init__(model)
+        self.steps = steps
+        self.sparse = SparseExplainer()
+
+    def explain(self, inp, ind=None):
+        grad = 0
+        inp_data = inp.data.clone()
+
+        for alpha in np.arange(1 / self.steps, 1.0, 1 / self.steps):
+            new_inp = Variable(inp_data * alpha, requires_grad=True)
+            g = self.sparse.explain(new_inp)
+            grad += g
+
+        return grad * inp_data / self.steps
 
 class DeconvExplainer(VanillaGradExplainer):
     def __init__(self, model):

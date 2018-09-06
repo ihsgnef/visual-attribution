@@ -18,7 +18,7 @@ def main():
         ['resnet50', 'vanilla_grad', 'imshow', None],
         # ['resnet50', 'grad_x_input', 'imshow', None],
         # ['resnet50', 'saliency', 'imshow', None],
-        # ['resnet50', 'smooth_grad', 'imshow', None],
+        ['resnet50', 'smooth_grad', 'imshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
@@ -26,28 +26,31 @@ def main():
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
         # ['vgg16', 'pattern_net', 'imshow', None],
         # ['vgg16', 'pattern_lrp', 'camshow', None],
-        ['resnet50', 'real_time_saliency', 'camshow', None],
+        #['resnet50', 'real_time_saliency', 'camshow', None],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 0}],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 1e3}],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 1e5}],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 0, 'lambda_l1': 1e3, 'lambda_l2': 1e5}],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 0, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
+        ['resnet50', 'sparse', 'imshow',
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],                    
         ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 0, 'lambda_l1': 0, 'lambda_l2': 0}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 0, 'lambda_l1': 0, 'lambda_l2': 1e3}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 0, 'lambda_l1': 0, 'lambda_l2': 1e5}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 0, 'lambda_l1': 1e3, 'lambda_l2': 1e5}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 0, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 1, 'lambda_l1': 1e3, 'lambda_l2': 1e5}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 1, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 1, 'lambda_l1': 5e3, 'lambda_l2': 1e5}],
-        ['resnet50', 'sparse', 'camshow',
-            {'lambda_t2': 1, 'lambda_l1': 8e3, 'lambda_l2': 1e5}],
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],            
+        ['resnet50', 'smooth_grad', 'imshow', None],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 1, 'lambda_l1': 5e3, 'lambda_l2': 1e5}],
+        #['resnet50', 'sparse', 'camshow',
+        #    {'hessian_coefficient': 1, 'lambda_l1': 8e3, 'lambda_l2': 1e5}],
     ]
 
-    image_path = 'images/fox.png'
+    image_path = 'images/tricycle.png'
     raw_img = viz.pil_loader(image_path)
 
     all_saliency_maps = []
@@ -73,7 +76,7 @@ def main():
     plt.subplot(3, 5, 1)
     plt.imshow(raw_img)
     plt.axis('off')
-    plt.title('Fox')
+    plt.title('Tricycle')
     for i, saliency in enumerate(all_saliency_maps):
         model_name, method_name, show_style, extra_args = model_methods[i]
         plt.subplot(3, 5, i + 2 + i // 4)

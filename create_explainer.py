@@ -23,10 +23,15 @@ def get_explainer(model, name, extra_args):
         'contrastive_excitation_backprop': ebp.ContrastiveExcitationBackpropExplainer,
         'real_time_saliency': rt.RealTimeSaliencyExplainer,
         'sparse': sparse.SparseExplainer,
+        'sparse_integrate_grad': bp.SparseIntegrateGradExplainer,
     }
 
     if name == 'smooth_grad':
         base_explainer = methods['vanilla_grad'](model)
+        explainer = bp.SmoothGradExplainer(base_explainer)
+
+    if name == 'soheil_smooth_grad':
+        base_explainer = methods['sparse'](model)
         explainer = bp.SmoothGradExplainer(base_explainer)
 
     elif name.find('pattern') != -1:

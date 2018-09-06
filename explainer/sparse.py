@@ -4,10 +4,10 @@ import torch.nn.functional as F
 
 
 class SparseExplainer(object):
-    def __init__(self, model, lambda_t2=1, lambda_l1=1e4, lambda_l2=1e5,
+    def __init__(self, model, hessian_coefficient=1, lambda_l1=1e3, lambda_l2=1e5,
                  n_iterations=10):
         self.model = model        
-        self.lambda_t2 = lambda_t2 
+        self.hessian_coefficient = hessian_coefficient 
         self.lambda_l1 = lambda_l1 
         self.lambda_l2 = lambda_l2 
         self.n_iterations = n_iterations
@@ -16,8 +16,8 @@ class SparseExplainer(object):
         batch_size, n_chs, img_width, img_height = inp.shape
         delta = torch.zeros((batch_size, n_chs, img_width * img_height)).cuda()
         delta = nn.Parameter(delta, requires_grad=True)
-        # optimizer = torch.optim.SGD([delta], lr=0.1)
-        optimizer = torch.optim.Adam([delta], lr=0.0001)
+        optimizer = torch.optim.SGD([delta], lr=0.1)
+        #optimizer = torch.optim.Adam([delta], lr=0.0001)
         for i in range(self.n_iterations):
             output = self.model(inp)
             # if ind is None:
@@ -34,10 +34,11 @@ class SparseExplainer(object):
             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
             print(taylor_1.data.cpu().numpy(), taylor_2.data.cpu().numpy(),
                   l1_term.data.cpu().numpy(), l2_term.data.cpu().numpy())
-            loss = - taylor_1 - self.lambda_t2 * taylor_2
+            loss = - taylor_1 - self.hessian_coefficient * taylor_2
             loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
         delta = delta.view((batch_size, n_chs, img_width, img_height))
         return delta.data
+
