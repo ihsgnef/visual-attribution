@@ -4,6 +4,7 @@ from explainer import gradcam as gc
 from explainer import patterns as pt
 from explainer import ebp
 from explainer import real_time as rt
+from explainer import sparse as sparse
 
 
 def get_explainer(model, name):
@@ -20,7 +21,8 @@ def get_explainer(model, name):
         'pattern_lrp': pt.PatternLRPExplainer,
         'excitation_backprop': ebp.ExcitationBackpropExplainer,
         'contrastive_excitation_backprop': ebp.ContrastiveExcitationBackpropExplainer,
-        'real_time_saliency': rt.RealTimeSaliencyExplainer
+        'real_time_saliency': rt.RealTimeSaliencyExplainer,
+        'sparse': sparse.SparseExplainer,
     }
 
     if name == 'smooth_grad':

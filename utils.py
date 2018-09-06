@@ -28,7 +28,7 @@ def upsample(inp, size):
         inp: (Tensor) input
         size: (Tuple [int, int]) height x width
     '''
-    backend = type2backend[inp.type()]
+    backend = type2backend[type(inp)]
     f = getattr(backend, 'SpatialUpSamplingBilinear_updateOutput')
     upsample_inp = inp.new()
     f(backend.library_state, inp, upsample_inp, size[0], size[1])
