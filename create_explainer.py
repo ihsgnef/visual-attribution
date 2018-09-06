@@ -26,11 +26,12 @@ def get_explainer(model, name, extra_args):
         'sparse_integrate_grad': bp.SparseIntegrateGradExplainer,
     }
 
+
     if name == 'smooth_grad':
         base_explainer = methods['vanilla_grad'](model)
         explainer = bp.SmoothGradExplainer(base_explainer)
 
-    if name == 'soheil_smooth_grad':
+    elif name == 'sparse_smooth_grad':
         base_explainer = methods['sparse'](model)
         explainer = bp.SmoothGradExplainer(base_explainer)
 

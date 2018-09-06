@@ -41,7 +41,7 @@ def main():
             {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],                    
         ['resnet50', 'sparse', 'camshow',
             {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],            
-        ['resnet50', 'smooth_grad', 'imshow', None],
+        ['resnet50', 'sparse_smooth_grad', 'imshow', None],
         #['resnet50', 'sparse', 'camshow',
         #    {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
         #['resnet50', 'sparse', 'camshow',
