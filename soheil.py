@@ -50,6 +50,7 @@ class SoheilExplainer(object):
             optimizer.step()
         return delta
 
+
 image_path = 'images/elephant.png'
 image_class = 101 # tusker
 raw_img = viz.pil_loader(image_path)
