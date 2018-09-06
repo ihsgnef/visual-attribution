@@ -8,6 +8,7 @@ def get_layer(model, key_list):
         a = a._modules[key]
     return a
 
+
 class GradCAMExplainer(VanillaGradExplainer):
     def __init__(self, model, target_layer_name_keys=None, use_inp=False):
         super(GradCAMExplainer, self).__init__(model)
@@ -53,4 +54,3 @@ class GradCAMExplainer(VanillaGradExplainer):
         cam = torch.clamp(cam, min=0)
 
         return cam
-

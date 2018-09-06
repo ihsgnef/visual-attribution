@@ -7,7 +7,7 @@ from explainer import real_time as rt
 from explainer import sparse as sparse
 
 
-def get_explainer(model, name):
+def get_explainer(model, name, extra_args):
     methods = {
         'vanilla_grad': bp.VanillaGradExplainer,
         'grad_x_input': bp.GradxInputExplainer,
@@ -93,7 +93,10 @@ def get_explainer(model, name):
         explainer = methods[name]('./weights/model-1.ckpt')
 
     else:
-        explainer = methods[name](model)
+        if extra_args is not None:
+            explainer = methods[name](model, **extra_args)
+        else:
+            explainer = methods[name](model)
 
     return explainer
 
