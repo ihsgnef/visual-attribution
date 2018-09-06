@@ -10,8 +10,8 @@ class VanillaGradExplainer(object):
 
     def _backprop(self, inp, ind):
         output = self.model(inp)
-        if ind is None:
-            ind = output.data.max(1)[1]
+        #if ind is None:
+        ind = output.data.max(1)[1]
         grad_out = output.data.clone()
         grad_out.fill_(0.0)
         grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)

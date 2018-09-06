@@ -47,8 +47,7 @@ def main():
             {'lambda_t2': 1, 'lambda_l1': 8e3, 'lambda_l2': 1e5}],
     ]
 
-    image_path = 'images/elephant.png'
-    image_class = 101  # tusker
+    image_path = 'images/fox.png'
     raw_img = viz.pil_loader(image_path)
 
     all_saliency_maps = []
@@ -65,8 +64,8 @@ def main():
             inp[2] = inp_copy[0]
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
-        target = torch.LongTensor([image_class]).cuda()
-        saliency = explainer.explain(inp, target)
+        #target = torch.LongTensor([image_class]).cuda()
+        saliency = explainer.explain(inp, None)#target)
         saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
         all_saliency_maps.append(saliency.cpu().numpy())
 
@@ -74,7 +73,7 @@ def main():
     plt.subplot(3, 5, 1)
     plt.imshow(raw_img)
     plt.axis('off')
-    plt.title('class_id=101 (Tusker)')
+    plt.title('Fox')
     for i, saliency in enumerate(all_saliency_maps):
         model_name, method_name, show_style, extra_args = model_methods[i]
         plt.subplot(3, 5, i + 2 + i // 4)
