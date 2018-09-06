@@ -15,17 +15,17 @@ from preprocess import get_preprocess
 def main():
     model_methods = [
         ['resnet50', 'vanilla_grad', 'imshow'],
-        ['resnet50', 'grad_x_input', 'imshow'],
-        ['resnet50', 'saliency', 'imshow'],
-        ['resnet50', 'smooth_grad', 'imshow'],
-        ['resnet50', 'deconv', 'imshow'],
-        ['resnet50', 'guided_backprop', 'imshow'],
-        ['resnet50', 'gradcam', 'camshow'],
+        # ['resnet50', 'grad_x_input', 'imshow'],
+        # ['resnet50', 'saliency', 'imshow'],
+        # ['resnet50', 'smooth_grad', 'imshow'],
+        # ['resnet50', 'deconv', 'imshow'],
+        # ['resnet50', 'guided_backprop', 'imshow'],
+        # ['resnet50', 'gradcam', 'camshow'],
         # ['resnet50', 'excitation_backprop', 'camshow'],
-        ['resnet50', 'contrastive_excitation_backprop', 'camshow'],
+        # ['resnet50', 'contrastive_excitation_backprop', 'camshow'],
         # ['vgg16', 'pattern_net', 'imshow'],
         # ['vgg16', 'pattern_lrp', 'camshow'],
-        ['resnet50', 'real_time_saliency', 'camshow'],
+        # ['resnet50', 'real_time_saliency', 'camshow'],
         ['resnet50', 'sparse', 'imshow'],
     ]
     
