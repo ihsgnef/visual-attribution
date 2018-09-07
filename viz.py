@@ -31,4 +31,3 @@ def plot_bbox(bboxes, xi, linewidth=1):
                                  linewidth=linewidth, edgecolor='r', facecolor='none')
         ax.add_patch(rect)
     ax.axis('off')
-

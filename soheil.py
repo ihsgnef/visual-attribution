@@ -2,65 +2,131 @@ import os
 import time
 import json
 import numpy as np
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import torch
-import PIL.Image
-from matplotlib import pylab as P
+import itertools
+import pytablewriter
 
 import viz
 import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
+from explainer.sparse import SparseExplainer
+
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
+from matplotlib import pylab as P
+
 
 def ShowGrayscaleImage(im, title='', ax=None):
-  if ax is None:
-    P.figure()
-  P.axis('off')
+    if ax is None:
+        P.figure()
+        P.axis('off')
 
-  P.imshow(im, cmap=P.cm.gray, vmin=0, vmax=1)
-  P.title(title)
+    P.imshow(im, cmap=P.cm.gray, vmin=0, vmax=1)
+    P.title(title)
 
-# def ShowDivergingImage(grad, title='', percentile=99, ax=None):  
-#   if ax is None:
-#     fig, ax = P.subplots()
-#   else:
-#     fig = ax.figure
-  
-#   P.axis('off')
-#   divider = make_axes_locatable(ax)
-#   cax = divider.append_axes('right', size='5%', pad=0.05)
-#   im = ax.imshow(grad, cmap=P.cm.coolwarm, vmin=-1, vmax=1)
-#   fig.colorbar(im, cax=cax, orientation='vertical')
-#   P.title(title)
 
+# def ShowDivergingImage(grad, title='', percentile=99, ax=None):
+#     if ax is None:
+#         fig, ax = P.subplots()
+#     else:
+#         fig = ax.figure
+#
+#     P.axis('off')
+#     divider = make_axes_locatable(ax)
+#     cax = divider.append_axes('right', size='5%', pad=0.05)
+#     im = ax.imshow(grad, cmap=P.cm.coolwarm, vmin=-1, vmax=1)
+#     fig.colorbar(im, cax=cax, orientation='vertical')
+#     P.title(title)
+#
+#
 # def LoadImage(file_path):
-#   im = PIL.Image.open(file_path)
-#   im = np.asarray(im)
-#   return im / 127.5 - 1.0
+#     im = PIL.Image.open(file_path)
+#     im = np.asarray(im)
+#     return im / 127.5 - 1.0
 
 
 def VisualizeImageGrayscale(image_3d, percentile=99):
-  r"""Returns a 3D tensor as a grayscale 2D tensor.
-  This method sums a 3D tensor across the absolute value of axis=2, and then
-  clips values at a given percentile.
-  """  
-  image_3d = np.abs(image_3d.squeeze())
-  image_2d = torch.sum(image_3d, dim=0)
+    """Returns a 3D tensor as a grayscale 2D tensor.  This method sums a 3D
+    tensor across the absolute value of axis=2, and then clips values at a
+    given percentile.
+    """
+    image_3d = np.abs(image_3d.squeeze())
+    image_2d = torch.sum(image_3d, dim=0)
 
-  image_2d = image_2d.numpy()
-  vmax = np.percentile(image_2d, percentile)
-  vmin = np.min(image_2d)
+    image_2d = image_2d.numpy()
+    vmax = np.percentile(image_2d, percentile)
+    vmin = np.min(image_2d)
 
-  return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
+    return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
+
+
+def lambda_l1_l2(image_path):
+    model_name = 'resnet50'
+    method_name = 'sparse'
+    show_style = 'imshow'
+    raw_img = viz.pil_loader(image_path)
+    transf = get_preprocess(model_name, method_name)
+    model = utils.load_model(model_name)
+    model.cuda()
+
+    lambda_l1s = [1, 1e2, 1e3, 1e4]
+    lambda_l2s = [1, 1e2, 1e3, 1e4]
+    all_configs = list(itertools.product(lambda_l1s, lambda_l2s))
+    all_configs = [{'lambda_l1': ll1, 'lambda_l2': ll2}
+                   for ll1, ll2 in all_configs]
+
+    for cfg_id, cfg in enumerate(all_configs):
+        explainer = SparseExplainer(model, **cfg)
+
+        inp = transf(raw_img)
+        if method_name == 'googlenet':  # swap channel due to caffe weights
+            inp_copy = inp.clone()
+            inp[0] = inp_copy[2]
+            inp[2] = inp_copy[0]
+        inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
+
+        # target = torch.LongTensor([image_class]).cuda()
+        target = None
+        saliency = explainer.explain(inp, target)
+        saliency = VisualizeImageGrayscale(saliency)
+        saliency = saliency.cpu().numpy()
+
+        if show_style == 'camshow':
+            saliency = utils.upsample(np.expand_dims(saliency, axis=0),
+                                      (raw_img.height, raw_img.width))
+            viz.plot_cam(saliency, raw_img, 'jet', alpha=0.5)
+        else:
+            plt.imshow(saliency, cmap=P.cm.gray, vmin=0, vmax=1)
+
+        output_path = 'images/lambda_l1_l2_{}.png'.format(cfg_id)
+        plt.savefig(output_path)
+        all_configs[cfg_id]['output_path'] = output_path
+
+    with open('lambda_l1_l2.json', 'w') as f:
+        json.dump(all_configs, f)
+
+    writer = pytablewriter.MarkdownTableWriter()
+    writer.table_name = "lambda_l1_l2"
+    writer.value_matrix = []
+    for i, _ in enumerate(lambda_l1s):
+        row = []
+        for j, _ in enumerate(lambda_l2s):
+            idx = i * len(lambda_l1s) + j
+            row.append('![]({})'.format(all_configs[idx]['output_path']))
+        writer.value_matrix.append(row)
+    with open('lambda_l1_l2.md', 'w') as f:
+        writer.stream = f
+        writer.write_table()
+
 
 def main():
-    model_methods = [
+    default_methods = [
         ['resnet50', 'vanilla_grad', 'imshow', None],
         # ['resnet50', 'grad_x_input', 'imshow', None],
         # ['resnet50', 'saliency', 'imshow', None],
-        #['resnet50', 'sparse_integrate_grad', 'imshow', None],
+        # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
@@ -68,47 +134,51 @@ def main():
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
         # ['vgg16', 'pattern_net', 'imshow', None],
         # ['vgg16', 'pattern_lrp', 'camshow', None],
-        #['resnet50', 'real_time_saliency', 'camshow', None],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 0}],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 1e3}],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 1e5}],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 0, 'lambda_l1': 1e3, 'lambda_l2': 1e5}],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 0, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
+        # ['resnet50', 'real_time_saliency', 'camshow', None],
+        ]
+    sparse_methods = [
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 0}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 1e3}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 0, 'lambda_l1': 0, 'lambda_l2': 1e5}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 0, 'lambda_l1': 1e3, 'lambda_l2': 1e5}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 0, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 1}],                   
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 1}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 2}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 2}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 3}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 3}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 4}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 4}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 5}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 5}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 6}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 6}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 7}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 7}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 8}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 8}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 9}], 
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 9}],
         ['resnet50', 'sparse', 'imshow',
-            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 10}], 
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],            
-        #['resnet50', 'sparse_smooth_grad', 'imshow', None],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 1, 'lambda_l1': 5e3, 'lambda_l2': 1e5}],
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 1, 'lambda_l1': 8e3, 'lambda_l2': 1e5}],
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0, 'n_iterations': 10}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],
+        # ['resnet50', 'sparse_smooth_grad', 'imshow', None],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 1, 'lambda_l1': 5e3, 'lambda_l2': 1e5}],
+        # ['resnet50', 'sparse', 'camshow',
+        #     {'hessian_coefficient': 1, 'lambda_l1': 8e3, 'lambda_l2': 1e5}],
     ]
+
+    model_methods = default_methods + sparse_methods
 
     image_path = 'images/tricycle.png'
     raw_img = viz.pil_loader(image_path)
@@ -127,12 +197,10 @@ def main():
             inp[2] = inp_copy[0]
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
-        #target = torch.LongTensor([image_class]).cuda()
-        saliency = explainer.explain(inp, None)#target)
+        # target = torch.LongTensor([image_class]).cuda()
+        saliency = explainer.explain(inp, None)  # target
         saliency = VisualizeImageGrayscale(saliency)
-        
-
-        #saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
+        # saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
 
         all_saliency_maps.append(saliency.cpu().numpy())
 
@@ -148,8 +216,9 @@ def main():
         #     viz.plot_cam(np.abs(saliency).max(axis=1).squeeze(),
         #                  raw_img, 'jet', alpha=0.5)
         if show_style == 'camshow':
-            viz.plot_cam(utils.upsample(np.expand_dims(saliency, axis=0), (raw_img.height, raw_img.width)),
-                raw_img, 'jet', alpha=0.5)
+            viz.plot_cam(utils.upsample(np.expand_dims(saliency, axis=0),
+                                        (raw_img.height, raw_img.width)),
+                         raw_img, 'jet', alpha=0.5)
         # else:
         #     if model_name == 'googlenet' or method_name == 'pattern_net':
         #         saliency = saliency.squeeze()[::-1].transpose(1, 2, 0)
@@ -175,4 +244,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    # main()
+    lambda_l1_l2('images/tricycle.png')
