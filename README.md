@@ -1,3 +1,7 @@
+```bash
+pandoc -o lambda_l1_l2.html lambda_l1_l2.md
+```
+
 # Pytorch Visual Attribution Methods
 
 A collection of visual attribution methods for model interpretability
