@@ -53,9 +53,7 @@ def VisualizeImageGrayscale(image_3d, percentile=99):
   vmax = np.percentile(image_2d, percentile)
   vmin = np.min(image_2d)
 
-  clipped =  np.clip((image_2d - vmin) / (vmax - vmin), 0, 1)
-  return torch.from_numpy(clipped)
-
+  return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
 
 def main():
     model_methods = [
@@ -82,9 +80,9 @@ def main():
         #['resnet50', 'sparse', 'camshow',
         #    {'hessian_coefficient': 0, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
         #['resnet50', 'sparse', 'imshow',
-            #{'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],                    
-        #['resnet50', 'sparse', 'camshow',
-        #    {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],            
+        #    {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],                    
+        ['resnet50', 'sparse', 'camshow',
+            {'hessian_coefficient': 1, 'lambda_l1': 5e4, 'lambda_l2': 0}],            
         #['resnet50', 'sparse_smooth_grad', 'imshow', None],
         #['resnet50', 'sparse', 'camshow',
         #    {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 1e5}],
@@ -114,16 +112,9 @@ def main():
         #target = torch.LongTensor([image_class]).cuda()
         saliency = explainer.explain(inp, None)#target)
         saliency = VisualizeImageGrayscale(saliency)
-        saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
+        
 
-
-        # Set up matplot lib figures.
-
-        #ShowGrayscaleImage(, title='method', ax=P.subplot(ROWS,COLS,1))
-
-#         # Render the saliency masks.
-# ShowGrayscaleImage(vanilla_mask_grayscale, title='Vanilla Gradient', ax=P.subplot(ROWS, COLS, 1))
-# ShowGrayscaleImage(smoothgrad_mask_grayscale, title='SmoothGrad', ax=P.subplot(ROWS, COLS, 2))
+        #saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
 
         all_saliency_maps.append(saliency.cpu().numpy())
 
@@ -138,6 +129,9 @@ def main():
         # if show_style == 'camshow':
         #     viz.plot_cam(np.abs(saliency).max(axis=1).squeeze(),
         #                  raw_img, 'jet', alpha=0.5)
+        if show_style == 'camshow':
+            viz.plot_cam(utils.upsample(np.expand_dims(saliency, axis=0), (raw_img.height, raw_img.width)),
+                raw_img, 'jet', alpha=0.5)
         # else:
         #     if model_name == 'googlenet' or method_name == 'pattern_net':
         #         saliency = saliency.squeeze()[::-1].transpose(1, 2, 0)
@@ -145,7 +139,8 @@ def main():
         #         saliency = saliency.squeeze().transpose(1, 2, 0)
         #     saliency -= saliency.min()
         #     saliency /= (saliency.max() + 1e-20)
-        plt.imshow(saliency, cmap=P.cm.gray, vmin=0, vmax=1)
+        else:
+            plt.imshow(saliency, cmap=P.cm.gray, vmin=0, vmax=1)
 
         plt.axis('off')
         if method_name == 'excitation_backprop':
