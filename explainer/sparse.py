@@ -19,8 +19,8 @@ class SparseExplainer(object):
         img_size = img_width * img_height
         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
         delta = nn.Parameter(delta, requires_grad=True)
-        optimizer = torch.optim.SGD([delta], lr=0.1)
-        # optimizer = torch.optim.Adam([delta], lr=0.0001)
+        # optimizer = torch.optim.SGD([delta], lr=0.1)
+        optimizer = torch.optim.Adam([delta], lr=0.0001)
         for i in range(self.n_iterations):
             output = self.model(inp)
             # if ind is None:
