@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 
 class SparseExplainer(object):
-    def __init__(self, model, hessian_coefficient=1, lambda_l1=1e3, lambda_l2=1e5,
+    def __init__(self, model, hessian_coefficient=1,lambda_l1=1e3, lambda_l2=1e5,
                  n_iterations=10):
         self.model = model        
         self.hessian_coefficient = hessian_coefficient 
@@ -40,5 +40,4 @@ class SparseExplainer(object):
             loss.backward()
             optimizer.step()
         delta = delta.view((batch_size, n_chs, img_width, img_height))
-        return delta.data
-
+        return delta.data.abs()    # abs as recommended by sohiel
