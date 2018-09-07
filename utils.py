@@ -1,7 +1,7 @@
 from torchvision import models
 from torch.autograd import Variable
 from torch._thnn import type2backend
-
+import torch
         
 def load_model(arch):
     '''

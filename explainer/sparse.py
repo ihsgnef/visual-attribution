@@ -22,7 +22,7 @@ class SparseExplainer(object):
             output = self.model(inp)
             # if ind is None:
             ind = output.max(1)[1]
-            out_loss = F.cross_entropy(output, ind)
+            out_loss = F.cross_entropy(output, ind)  # TODO, find a way to not recalculate grad each time
             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
             inp_grad = inp_grad.view((batch_size, n_chs, img_width * img_height))
             hessian_delta_vp, = torch.autograd.grad(
@@ -36,6 +36,7 @@ class SparseExplainer(object):
                   l1_term.data.cpu().numpy(), l2_term.data.cpu().numpy())
             loss = - taylor_1 - self.hessian_coefficient * taylor_2
             loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term
+            print(loss)
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
