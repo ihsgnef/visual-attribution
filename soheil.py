@@ -112,7 +112,7 @@ def lambda_l1_l2(image_path):
     writer.table_name = "baselines"
     writer.header_list = ['input'] + baselines
     writer.value_matrix = []
-    row = ['![]()'.format(image_path)]
+    row = ['![](images/tricycle.png)']
     row += ['![](images/tricycle_{}.png)'.format(x) for x in baselines]
     writer.value_matrix.append(row)
     with open('lambda_l1_l2.md', 'w') as f:
