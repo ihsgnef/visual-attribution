@@ -107,18 +107,90 @@ def lambda_l1_l2(image_path):
     with open('lambda_l1_l2.json', 'w') as f:
         json.dump(all_configs, f)
 
+    baselines = ['vanilla_grad', 'grad_x_input', 'saliency', 'gradcam']
     writer = pytablewriter.MarkdownTableWriter()
-    writer.table_name = "lambda_l1_l2"
+    writer.table_name = "baselines"
+    writer.header_list = ['input'] + baselines
     writer.value_matrix = []
-    for i, _ in enumerate(lambda_l1s):
-        row = []
-        for j, _ in enumerate(lambda_l2s):
-            idx = i * len(lambda_l1s) + j
-            row.append('![]({})'.format(all_configs[idx]['output_path']))
-        writer.value_matrix.append(row)
+    row = ['![]()'.format(image_path)]
+    row += ['![](images/tricycle_{}.png)'.format(x) for x in baselines]
+    writer.value_matrix.append(row)
     with open('lambda_l1_l2.md', 'w') as f:
         writer.stream = f
         writer.write_table()
+
+    writer = pytablewriter.MarkdownTableWriter()
+    writer.table_name = "lambda_l1_l2"
+    writer.header_list = [''] + ['lambda_l2: {}'.format(x) for x in lambda_l2s]
+    writer.value_matrix = []
+    for i, lambda_l1 in enumerate(lambda_l1s):
+        row = ['lambda l1: {}'.format(lambda_l1)]
+        for j, lambda_l2 in enumerate(lambda_l2s):
+            cfg = all_configs[i * len(lambda_l1s) + j]
+            # row.append('<img src="{}">'.format(cfg['output_path']))
+            row.append('![]({})'.format(cfg['output_path']))
+        writer.value_matrix.append(row)
+    with open('lambda_l1_l2.md', 'a') as f:
+        writer.stream = f
+        writer.write_table()
+
+
+def baselines():
+    model_methods = [
+        ['resnet50', 'vanilla_grad', 'imshow', None],
+        ['resnet50', 'grad_x_input', 'imshow', None],
+        ['resnet50', 'saliency', 'imshow', None],
+        ['resnet50', 'smooth_grad', 'imshow', None],
+        # ['resnet50', 'deconv', 'imshow', None],
+        # ['resnet50', 'guided_backprop', 'imshow', None],
+        ['resnet50', 'gradcam', 'camshow', None],
+        # ['resnet50', 'excitation_backprop', 'camshow', None],
+        # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
+        # ['vgg16', 'pattern_net', 'imshow', None],
+        # ['vgg16', 'pattern_lrp', 'camshow', None],
+    ]
+
+    image_path = 'images/tricycle.png'
+    raw_img = viz.pil_loader(image_path)
+
+    all_saliency_maps = []
+    for model_name, method_name, _, kwargs in model_methods:
+        transf = get_preprocess(model_name, method_name)
+        model = utils.load_model(model_name)
+        model.cuda()
+        explainer = get_explainer(model, method_name, kwargs)
+
+        inp = transf(raw_img)
+        if method_name == 'googlenet':  # swap channel due to caffe weights
+            inp_copy = inp.clone()
+            inp[0] = inp_copy[2]
+            inp[2] = inp_copy[0]
+        inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
+
+        # target = torch.LongTensor([image_class]).cuda()
+        target = None
+        saliency = explainer.explain(inp, target)
+        saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
+        all_saliency_maps.append(saliency.cpu().numpy())
+
+    for i, saliency in enumerate(all_saliency_maps):
+        model_name, method_name, show_style, extra_args = model_methods[i]
+        print(method_name)
+        if show_style == 'camshow':
+            viz.plot_cam(np.abs(saliency).max(axis=1).squeeze(),
+                         raw_img, 'jet', alpha=0.5)
+        else:
+            if model_name == 'googlenet' or method_name == 'pattern_net':
+                saliency = saliency.squeeze()[::-1].transpose(1, 2, 0)
+            else:
+                saliency = saliency.squeeze().transpose(1, 2, 0)
+            saliency -= saliency.min()
+            saliency /= (saliency.max() + 1e-20)
+            plt.imshow(saliency, cmap='gray')
+
+        plt.axis('off')
+        output_path = 'images/tricycle_{}.png'.format(method_name)
+        plt.savefig(output_path)
 
 
 def main():
@@ -178,13 +250,14 @@ def main():
         #     {'hessian_coefficient': 1, 'lambda_l1': 8e3, 'lambda_l2': 1e5}],
     ]
 
-    model_methods = default_methods + sparse_methods
+    model_methods = default_methods  # + sparse_methods
 
     image_path = 'images/tricycle.png'
     raw_img = viz.pil_loader(image_path)
 
     all_saliency_maps = []
     for model_name, method_name, _, kwargs in model_methods:
+        print(method_name)
         transf = get_preprocess(model_name, method_name)
         model = utils.load_model(model_name)
         model.cuda()
@@ -198,11 +271,13 @@ def main():
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
         # target = torch.LongTensor([image_class]).cuda()
-        saliency = explainer.explain(inp, None)  # target
+        target = None
+        saliency = explainer.explain(inp, target)
         saliency = VisualizeImageGrayscale(saliency)
         # saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
 
         all_saliency_maps.append(saliency.cpu().numpy())
+
 
     plt.figure(figsize=(25, 15))
     plt.subplot(3, 5, 1)
@@ -245,4 +320,5 @@ def main():
 
 if __name__ == '__main__':
     # main()
+    # baselines()
     lambda_l1_l2('images/tricycle.png')
