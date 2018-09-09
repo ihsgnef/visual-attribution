@@ -268,7 +268,9 @@ def baselines():
 
 def main():
     default_methods = [
-        ['resnet50', 'vanilla_grad', 'imshow', None],
+        #['resnet50', 'vanilla_grad', 'imshow', None],
+		#['resnet50', 'sparse_guided_backprop', 'imshow', None],
+		['resnet50', 'sparse', 'imshow', None]
         # ['resnet50', 'grad_x_input', 'imshow', None],
         # ['resnet50', 'saliency', 'imshow', None],
         # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
@@ -327,7 +329,7 @@ def main():
 
     model_methods = default_methods  # + sparse_methods
 
-    image_path = 'images/tricycle.png'
+    image_path = 'images/8.png'
     raw_img = viz.pil_loader(image_path)
 
     all_saliency_maps = []
@@ -347,7 +349,8 @@ def main():
 
         # target = torch.LongTensor([image_class]).cuda()
         target = None
-        saliency = explainer.explain(inp, target)
+        saliency, loss_history = explainer.explain(inp, target, return_loss=True)
+        print(loss_history)
         saliency = VisualizeImageGrayscale(saliency)
         # saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
 
@@ -393,7 +396,7 @@ def main():
 
 
 if __name__ == '__main__':
-    # main()
-    # baselines()
+    main()
+    baselines()
     lambda_l1_l2()
-    # lambda_l1_n_iterations()
+    lambda_l1_n_iterations()
