@@ -137,7 +137,7 @@ def lambda_l1_n_iterations():
 
 def lambda_l1_l2():
     images = ['8', 'beach', 'elephant',  'obelisk',
-    '9', 'bird', 'fox', 'tricycle', 'utensil']
+    'bird', 'fox', 'tricycle', 'utensil']
     for image in images:
         print(image)
         if not os.path.exists('images/' + image):
