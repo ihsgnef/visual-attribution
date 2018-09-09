@@ -4,8 +4,8 @@ import torch.nn.functional as F
 from collections import defaultdict
 
 class SparseExplainer(object):
-    def __init__(self, model, hessian_coefficient=1,
-                 lambda_l1=1e3, lambda_l2=0,
+    def __init__(self, model, hessian_coefficient=0,
+                 lambda_l1=1e3, lambda_l2=1e3,
                  n_iterations=10):
         self.model = model
         self.hessian_coefficient = hessian_coefficient
