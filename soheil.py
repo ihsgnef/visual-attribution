@@ -57,7 +57,8 @@ def VisualizeImageGrayscale(image_3d, percentile=99):
     vmax = np.percentile(image_2d, percentile)
     vmin = np.min(image_2d)
 
-    print(vmax)
+    print("Vmax", vmax)
+    print("Vmin", vmin)
 
     return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
 
@@ -146,8 +147,8 @@ def lambda_l1_l2():
     model = utils.load_model(model_name)
     model.cuda()
 
-    lambda_l1s = [1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
-    lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6]
+    lambda_l1s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
+    lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
     all_configs = list(itertools.product(lambda_l1s, lambda_l2s))
     all_configs = [{'lambda_l1': ll1, 'lambda_l2': ll2}
                    for ll1, ll2 in all_configs]
@@ -164,7 +165,8 @@ def lambda_l1_l2():
 
         # target = torch.LongTensor([image_class]).cuda()
         target = None
-        saliency = explainer.explain(inp, target)
+        saliency, loss_history = explainer.explain(inp, target, return_loss=True)
+        print(loss_history)
         saliency = VisualizeImageGrayscale(saliency)
         saliency = saliency.cpu().numpy()
 
@@ -396,7 +398,7 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
-    baselines()
+    #main()
+    #baselines()
     lambda_l1_l2()
-    lambda_l1_n_iterations()
+    #lambda_l1_n_iterations()

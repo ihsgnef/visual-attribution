@@ -12,7 +12,7 @@ class SparseExplainer(object):
         self.lambda_l1 = lambda_l1
         self.lambda_l2 = lambda_l2
         self.n_iterations = n_iterations
-        print(self.lambda_l1, self.lambda_l2)
+        print("Lambda 1", self.lambda_l1, "Lambda 2", self.lambda_l2)
 
     def explain(self, inp, ind=None, return_loss=False):
         batch_size, n_chs, img_width, img_height = inp.shape
