@@ -133,6 +133,55 @@ class GuidedBackpropExplainer(VanillaGradExplainer):
         self.model.apply(replace)
 
 
+
+class SparseIntegrateGradExplainer(VanillaGradExplainer):
+    def __init__(self, model, steps=5):
+        super(SparseIntegrateGradExplainer, self).__init__(model)
+        self.steps = steps
+        self.sparse = sparse.SparseExplainer(model)
+
+    def explain(self, inp, ind=None):
+        grad = 0
+        inp_data = inp.data.clone()
+
+        for alpha in np.arange(1 / self.steps, 1.0, 1 / self.steps):
+            new_inp = Variable(inp_data * alpha, requires_grad=True)
+            g = self.sparse.explain(new_inp)
+            grad += g
+
+        return grad * inp_data / self.steps
+
+class SparseGuidedBackpropExplainer(sparse.SparseExplainer):
+    def __init__(self, model):
+        super(SparseGuidedBackpropExplainer, self).__init__(model)
+        self._override_backward()
+
+    def _override_backward(self):
+        class _ReLU(Function):
+            @staticmethod
+            def forward(ctx, input):
+                output = torch.clamp(input, min=0)
+                ctx.save_for_backward(output)
+                return output
+
+            @staticmethod
+            def backward(ctx, grad_output):
+                output, = ctx.saved_tensors
+                mask1 = (output > 0).float()
+                mask2 = (grad_output.data > 0).float()
+                grad_inp = mask1 * mask2 * grad_output.data
+                grad_output.data.copy_(grad_inp)
+                return grad_output
+
+        def new_forward(self, x):
+            return _ReLU.apply(x)
+
+        def replace(m):
+            if m.__class__.__name__ == 'ReLU':
+                m.forward = types.MethodType(new_forward, m)
+
+        self.model.apply(replace)
+
 # modified from https://github.com/PAIR-code/saliency/blob/master/saliency/base.py#L80
 class SmoothGradExplainer(object):
     def __init__(self, base_explainer, stdev_spread=0.15,

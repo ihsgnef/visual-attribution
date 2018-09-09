@@ -24,6 +24,7 @@ def get_explainer(model, name, extra_args):
         'real_time_saliency': rt.RealTimeSaliencyExplainer,
         'sparse': sparse.SparseExplainer,
         'sparse_integrate_grad': bp.SparseIntegrateGradExplainer,
+        'sparse_guided_backprop': bp.SparseGuidedBackpropExplainer
     }
 
 
