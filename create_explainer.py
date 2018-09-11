@@ -48,10 +48,6 @@ def get_explainer(model, name, extra_args):
             explainer = methods[name](
                 model, target_layer_name_keys=['features', '30'] # pool5
             )
-        elif model.__class__.__name__ == 'GoogleNet':
-            explainer = methods[name](
-                model, target_layer_name_keys=['pool5'], use_inp=True,
-            )
         elif model.__class__.__name__ == 'ResNet':
             explainer = methods[name](
                 model, target_layer_name_keys=['avgpool'], use_inp=True,
@@ -68,12 +64,7 @@ def get_explainer(model, name, extra_args):
                 model,
                 output_layer_keys=['layer4', '1', 'conv1']  # res4a
             )
-        elif model.__class__.__name__ == 'GoogleNet': # googlent
-            explainer = methods[name](
-                model,
-                output_layer_keys=['pool2']
-            )
-
+        
     elif name == 'contrastive_excitation_backprop':
         if model.__class__.__name__ == 'VGG': # vgg16
             explainer = methods[name](
@@ -88,13 +79,6 @@ def get_explainer(model, name, extra_args):
                 intermediate_layer_keys=['avgpool'],
                 output_layer_keys=['layer4', '1', 'conv1'],  # res4a
                 final_linear_keys=['fc']
-            )
-        elif model.__class__.__name__ == 'GoogleNet':
-            explainer = methods[name](
-                model,
-                intermediate_layer_keys=['pool5'],
-                output_layer_keys=['pool2'],
-                final_linear_keys=['loss3.classifier']
             )
     elif name == 'real_time_saliency':
         explainer = methods[name]('./weights/model-1.ckpt')

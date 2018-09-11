@@ -103,10 +103,6 @@ def main():
         explainer = get_explainer(model, method_name, kwargs)
 
         inp = transf(raw_img)               ######################################### TODO ERIC KNOWS THIS        
-        if method_name == 'googlenet':  # swap channel due to caffe weights
-            inp_copy = inp.clone()
-            inp[0] = inp_copy[2]
-            inp[2] = inp_copy[0]
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
                 
         target = None          

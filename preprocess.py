@@ -57,9 +57,7 @@ def get_preprocess(arch, method):
         transf = transforms.Compose([
             transforms.Scale((224, 224)),
             transforms.ToTensor(),
-            normalize
+            #normalize #####################################################
         ])
 
     return transf
-
-
