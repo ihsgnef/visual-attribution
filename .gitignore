@@ -3,7 +3,11 @@
 *.npz
 *.pkl
 *.ckpt
+*.swp
+*.swo
+*/*.swp
+*/*.swo
 .idea/
 .ipynb_checkpoints/
 .DS_Store
-
+output
