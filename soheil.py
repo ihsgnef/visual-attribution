@@ -59,6 +59,7 @@ def VisualizeImageGrayscale(image_3d, percentile=99):
     vmin = np.min(image_2d)
 
     print(vmax)
+    print(vmin)
 
     return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
 
@@ -85,10 +86,6 @@ def lambda_l1_n_iterations():
         explainer = SparseExplainer(model, **cfg)
 
         inp = transf(raw_img)
-        if method_name == 'googlenet':  # swap channel due to caffe weights
-            inp_copy = inp.clone()
-            inp[0] = inp_copy[2]
-            inp[2] = inp_copy[0]
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
         # target = torch.LongTensor([image_class]).cuda()
@@ -165,10 +162,6 @@ def lambda_l1_l2():
         for cfg_id, cfg in enumerate(all_configs):
             explainer = SparseExplainer(model, **cfg)
             inp = transf(raw_img)
-            if method_name == 'googlenet':  # swap channel due to caffe weights
-                inp_copy = inp.clone()
-                inp[0] = inp_copy[2]
-                inp[2] = inp_copy[0]
             inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
             # target = torch.LongTensor([image_class]).cuda()
@@ -243,10 +236,6 @@ def lambda_l1_l2():
             explainer = get_explainer(model, method_name, kwargs)
 
             inp = transf(raw_img)
-            if method_name == 'googlenet':  # swap channel due to caffe weights
-                inp_copy = inp.clone()
-                inp[0] = inp_copy[2]
-                inp[2] = inp_copy[0]
             inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
             # target = torch.LongTensor([image_class]).cuda()
@@ -285,9 +274,9 @@ def main():
         # ['resnet50', 'saliency', 'imshow', None],
         # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
-        ['resnet50', 'guided_backprop', 'imshow', None],
-        ['resnet50', 'smooth_grad', 'imshow', None],
-        ['resnet50', 'sparse_smooth_grad', 'imshow', None],
+        #['resnet50', 'guided_backprop', 'imshow', None],
+        #['resnet50', 'smooth_grad', 'imshow', None],
+        #['resnet50', 'sparse_smooth_grad', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
@@ -341,7 +330,7 @@ def main():
 
     model_methods = default_methods  # + sparse_methods
 
-    image_path = 'images/9.png'
+    image_path = 'images/tricycle.png'
     raw_img = viz.pil_loader(image_path)
 
     all_saliency_maps = []
@@ -353,10 +342,6 @@ def main():
         explainer = get_explainer(model, method_name, kwargs)
 
         inp = transf(raw_img)
-        if method_name == 'googlenet':  # swap channel due to caffe weights
-            inp_copy = inp.clone()
-            inp[0] = inp_copy[2]
-            inp[2] = inp_copy[0]
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
         # target = torch.LongTensor([image_class]).cuda()
@@ -407,8 +392,8 @@ def main():
 
 
 if __name__ == '__main__':
-    #main()
+    main()
     #baselines()
-    lambda_l1_l2()
+    #lambda_l1_l2()
     #lambda_l1_n_iterations()
-
+    lambda_l1_l2()

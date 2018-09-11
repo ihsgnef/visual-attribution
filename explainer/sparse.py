@@ -6,6 +6,7 @@ from collections import defaultdict
 
 class SparseExplainer(object):
     def __init__(self, model, hessian_coefficient=1,
+
                  lambda_l1=1e3, lambda_l2=1e3,
                  n_iterations=10):
         self.model = model
@@ -38,7 +39,9 @@ class SparseExplainer(object):
             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-            loss = - taylor_1 - self.hessian_coefficient * taylor_2
+            #loss = - taylor_1 - self.hessian_coefficient * taylor_2
+            loss = - self.hessian_coefficient * taylor_2
+
             loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term            
             if i != 0:
                 loss_history['l1'].extend(self.lambda_l1 * l1_term)
