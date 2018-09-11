@@ -37,7 +37,7 @@ import os
 #     # transforms.ToPILImage(),
 #     ])
 
-def perturb(model, X, y=None, epsilon=0.01, protected=None):         
+def perturb(model, X, y=None, epsilon=.01, protected=None):         
     
     #X_var = Variable(torch.from_numpy(X).cuda(), requires_grad=True, volatile=False)
     #y_var = Variable(torch.LongTensor(y).cuda(), requires_grad=False, volatile=False)
@@ -78,22 +78,26 @@ def main():
     model.cuda()
     vanilla_grad_explainer = get_explainer(model, 'vanilla_grad', None)
     sparse_explainer = get_explainer(model, 'sparse', None)
-    explainers = [vanilla_grad_explainer]#, sparse_explainer]
+    explainers = [vanilla_grad_explainer, sparse_explainer]
+    explainers_correct = [0, 0]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
     ])
 
     target = None          
-    image_path = 'images/temp/'
-    directory = os.fsencode(image_path)
-    for file in os.listdir(directory):
-        filename = os.fsdecode(file)
-        raw_img = viz.pil_loader(image_path + filename)
+    image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
+
+    import glob
+    num_total = 0
+    for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
+        num_total = num_total + 1
+        if (num_total > 1000):
+            continue
+        raw_img = viz.pil_loader(filename)
         inp = transf(raw_img)               ######################################### TODO ERIC KNOWS THIS        
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-        for explainer in explainers:            
-        
+        for idx, explainer in enumerate(explainers):            
             saliency = explainer.explain(inp, target)
             saliency = VisualizeImageGrayscale(saliency)        
             protected_region = getProtectedRegion(saliency.cpu().numpy())                            
@@ -102,11 +106,14 @@ def main():
             original_prediction = model(inp).max(1)[1]        
             adversarial_prediction = model(adversarial_image).max(1)[1]
 
-            print("Original Prediction", original_prediction)
-            print("Adversarial Prediction", adversarial_prediction)            
+            #print("Original Prediction", original_prediction)
+            #print("Adversarial Prediction", adversarial_prediction)            
 
             if (original_prediction.data.cpu().numpy()[0] == adversarial_prediction.data.cpu().numpy()[0]):
-                print("Matched!")
+                explainers_correct[idx] = explainers_correct[idx] + 1
+	
+    for explainer_correct in explainers_correct:
+        print(float(explainer_correct) / float(1000))#num_total))    
 
 if __name__ == '__main__':
     main()    
