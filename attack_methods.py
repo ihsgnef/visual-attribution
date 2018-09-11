@@ -22,13 +22,26 @@ from scipy.stats import truncnorm
 import torch.nn as nn
 from torch.autograd import Variable
 import torch.nn.functional as F
+import torchvision.transforms as transforms
 
-def perturb(model, X, y=None, epsilon=0.3, protected=None):         
+import torchvision.transforms.functional as F_trans
+
+from torchvision.models.inception import inception_v3
+
+# inv_normalize = transforms.Compose([         
+#     transforms.Normalize(mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
+#         std=[1/0.229, 1/0.224, 1/0.255]),
+#     transforms.Scale((299, 299)),
+#     # transforms.ToPILImage(),
+#     ])
+
+def perturb(model, X, y=None, epsilon=0.05, protected=None):         
     
     #X_var = Variable(torch.from_numpy(X).cuda(), requires_grad=True, volatile=False)
     #y_var = Variable(torch.LongTensor(y).cuda(), requires_grad=False, volatile=False)
 
     #output = model(X_var)
+    ################################output = model(transf(X))
     output = model(X)
     if y is None:
         y = output.max(1)[1]
@@ -36,14 +49,17 @@ def perturb(model, X, y=None, epsilon=0.3, protected=None):
     loss.backward()
     #grad_sign = X_var.grad.data.cpu().sign().numpy()
     grad_sign = X.grad.data.cpu().sign().numpy()
-
-    perturbed_X = X.data.cpu().numpy() + epsilon * grad_sign
+    #################################################################### TODO, we use different maskes
+    protected = np.repeat(protected[np.newaxis, :, :], 3, axis=0)
+    grad_sign = grad_sign * protected     
+    
+    perturbed_X = X.data.cpu().numpy() + epsilon * grad_sign                 
     perturbed_X = np.clip(perturbed_X, 0, 1)    
     X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True)    
     return X
 
-def getProtectedRegion(saliency, cutoff = 0.25):        
-    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it
+def getProtectedRegion(saliency, cutoff = 0.10):                
+    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it    
 
 def ShowGrayscaleImage(im, title='', ax=None):
     if ax is None:
@@ -82,10 +98,11 @@ def main():
         print(method_name)
         transf = get_preprocess(model_name, method_name)
         model = utils.load_model(model_name)
+        #model = inception_v3(pretrained=True, transform_input=True).eval().cuda()
         model.cuda()
         explainer = get_explainer(model, method_name, kwargs)
 
-        inp = transf(raw_img)
+        inp = transf(raw_img)               ######################################### TODO ERIC KNOWS THIS        
         if method_name == 'googlenet':  # swap channel due to caffe weights
             inp_copy = inp.clone()
             inp[0] = inp_copy[2]
@@ -98,23 +115,18 @@ def main():
         all_saliency_maps.append(saliency.cpu().numpy())
 
         protected_region = getProtectedRegion(saliency.cpu().numpy())                            
-        all_saliency_maps.append(protected_region) # plot protected region
+        all_saliency_maps.append(1 - protected_region) # plot protected region
 
-        adversarial_image = perturb(model, inp, protected = None)                
-        original_prediction = model(inp).max(1)[1]
+        adversarial_image = perturb(model, inp, protected = protected_region)                
+        original_prediction = model(inp).max(1)[1]        
         adversarial_prediction = model(adversarial_image).max(1)[1]
 
-        print(original_prediction)
-        print(adversarial_prediction)
-        # if original_prediction == adversarial_prediction:
-        #     print("Correct!")
-        # else:
-        #     print("Incorrect!")
+        print("Original Prediction", original_prediction)
+        print("Adversarial Prediction", adversarial_prediction)
         
         adversarial_saliency = explainer.explain(adversarial_image, adversarial_prediction.cuda()) # explain using new prediction
         adversarial_saliency = VisualizeImageGrayscale(adversarial_saliency)        
         all_saliency_maps.append(adversarial_saliency.cpu().numpy())
-
 
     model_methods = [
         ['resnet50', 'vanilla_grad', 'imshow', None],
@@ -127,6 +139,13 @@ def main():
     plt.imshow(raw_img)
     plt.axis('off')
     plt.title('Tricycle')
+
+    #plt.imshow(inv_normalize(F_trans.to_pil_image(adversarial_image.squeeze().cpu().data)))
+    #print(F_trans.to_pil_image(adversarial_image.squeeze().cpu().data))
+    
+
+    #plt.imshow(adversarial_image.squeeze().cpu().data.numpy().transpose(1, 2, 0))  # TODO what the fucking shit fuck
+    #    plt.imshow(inv_normalize((adversarial_image.squeeze().cpu().data)))
     for i, saliency in enumerate(all_saliency_maps):
         model_name, method_name, show_style, extra_args = model_methods[i]
         plt.subplot(3, 5, i + 2 + i // 4)
