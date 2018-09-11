@@ -10,6 +10,7 @@ from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
 
+import os
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
@@ -132,23 +133,28 @@ def lambda_l1_n_iterations():
 
 
 def lambda_l1_l2():
-    model = utils.load_model(model_name)
-    model.cuda()
-
     images = ['8', 'beach', 'elephant',  'obelisk',
-    'tusker_saliency', '9', 'bird', 'fox', 'tricycle', 'utensil']
+    'bird', 'fox', 'tricycle', 'utensil']
     for image in images:
-        image_path = 'images' + image + '.png'
-        baseline_path = 'images/' + image + '_{}.png'
-        output_path = 'images/' + image + '_lambda_l1_l2_{}.png'
+        print(image)
+        if not os.path.exists('images/' + image):
+            os.makedirs('images/' + image)
+        image_path = 'images/' + image + '/' + image + '.png'
+        baseline_path = 'images/' + image + '/' + image + '_{}.png'
+        output_path = 'images/' + image + '/lambda_l1_l2_{}.png'
         model_name = 'resnet50'
         method_name = 'sparse'
         show_style = 'imshow'
         raw_img = viz.pil_loader(image_path)
         transf = get_preprocess(model_name, method_name)
         
+        model = utils.load_model(model_name)
+        model.cuda()
+
         lambda_l1s = [1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
-        lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6]        
+        lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6]       
+        lambda_l1s = [1e2, 1e3]
+        lambda_l2s = [0, 1]
         all_configs = list(itertools.product(lambda_l1s, lambda_l2s))
         all_configs = [{'lambda_l1': ll1, 'lambda_l2': ll2}
                        for ll1, ll2 in all_configs]
@@ -182,7 +188,7 @@ def lambda_l1_l2():
         row = ['![]({})'.format(image_path)]
         row += ['![]({})'.format(baseline_path.format(x)) for x in baselines]
         writer.value_matrix.append(row)
-        with open(image + '_lambda_l1_l2.md', 'w') as f:
+        with open('images/' + image + '/lambda_l1_l2.md', 'w') as f:
             writer.stream = f
             writer.write_table()
 
@@ -199,7 +205,7 @@ def lambda_l1_l2():
                 # row.append('<img src="{}">'.format(cfg['output_path']))
                 row.append('![]({})'.format(cfg['output_path']))
             writer.value_matrix.append(row)
-        with open(image + '_lambda_l1_l2.md', 'a') as f:
+        with open('images/' + image + '/lambda_l1_l2.md', 'a') as f:
             writer.stream = f
             writer.write_table()
         plt.clf()
@@ -234,7 +240,8 @@ def lambda_l1_l2():
 
             # target = torch.LongTensor([image_class]).cuda()
             target = None
-            saliency = explainer.explain(inp, target)
+            saliency, loss_history = explainer.explain(inp, target, return_loss=True)
+            print(loss_history)
             saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
             all_saliency_maps.append(saliency.cpu().numpy())
 
@@ -261,8 +268,8 @@ def lambda_l1_l2():
 def main():
     default_methods = [
         #['resnet50', 'vanilla_grad', 'imshow', None],
-	#['resnet50', 'sparse_guided_backprop', 'imshow', None],
-	['resnet50', 'sparse', 'imshow', None],
+        #['resnet50', 'sparse_guided_backprop', 'imshow', None],
+        ['resnet50', 'sparse', 'imshow', None],
         # ['resnet50', 'grad_x_input', 'imshow', None],
         # ['resnet50', 'saliency', 'imshow', None],
         # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
@@ -389,3 +396,4 @@ if __name__ == '__main__':
     #baselines()
     #lambda_l1_l2()
     #lambda_l1_n_iterations()
+    lambda_l1_l2()
