@@ -104,10 +104,12 @@ def main():
         original_prediction = model(inp).max(1)[1]
         adversarial_prediction = model(adversarial_image).max(1)[1]
 
-        if original_prediction == adversarial_prediction:
-            print("Correct!")
-        else:
-            print("Incorrect!")
+        print(original_prediction)
+        print(adversarial_prediction)
+        # if original_prediction == adversarial_prediction:
+        #     print("Correct!")
+        # else:
+        #     print("Incorrect!")
         
         adversarial_saliency = explainer.explain(adversarial_image, adversarial_prediction.cuda()) # explain using new prediction
         adversarial_saliency = VisualizeImageGrayscale(adversarial_saliency)        
