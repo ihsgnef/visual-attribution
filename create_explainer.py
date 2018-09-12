@@ -6,9 +6,9 @@ from explainer import ebp
 from explainer import real_time as rt
 from explainer import sparse as sparse
 
-
 def get_explainer(model, name, extra_args):
     methods = {
+        'random': bp.RandomExplainer,
         'vanilla_grad': bp.VanillaGradExplainer,
         'grad_x_input': bp.GradxInputExplainer,
         'saliency': bp.SaliencyExplainer,
