@@ -78,8 +78,8 @@ def main():
     model.cuda()
     vanilla_grad_explainer = get_explainer(model, 'vanilla_grad', None)
     sparse_explainer = get_explainer(model, 'sparse', None)
-    explainers = [vanilla_grad_explainer, sparse_explainer]
-    explainers_correct = [0, 0]
+    explainers = [vanilla_grad_explainer]#, sparse_explainer]
+    explainers_correct = [0]#, 0]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -90,9 +90,11 @@ def main():
 
     import glob
     num_total = 0
+
+    current_cutoff = .10
     for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
         num_total = num_total + 1
-        if (num_total > 1000):
+        if (num_total > 50):
             continue
         raw_img = viz.pil_loader(filename)
         inp = transf(raw_img)               ######################################### TODO ERIC KNOWS THIS        
@@ -100,7 +102,7 @@ def main():
         for idx, explainer in enumerate(explainers):            
             saliency = explainer.explain(inp, target)
             saliency = VisualizeImageGrayscale(saliency)        
-            protected_region = getProtectedRegion(saliency.cpu().numpy())                            
+            protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)                            
         
             adversarial_image = perturb(model, inp, protected = protected_region)                
             original_prediction = model(inp).max(1)[1]        
