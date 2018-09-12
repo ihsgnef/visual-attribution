@@ -38,7 +38,7 @@ import glob
 #     # transforms.ToPILImage(),
 #     ])
 
-def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
+def perturb(model, X, y=None, epsilon=32.0/255.0, protected=None):         
     
     #X_var = Variable(torch.from_numpy(X).cuda(), requires_grad=True, volatile=False)
     #y_var = Variable(torch.LongTensor(y).cuda(), requires_grad=False, volatile=False)
@@ -60,14 +60,16 @@ def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True)    
     return X
 
-
 #def getProtectedRegion(saliency, cutoff = 0.05):                
 #    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it    
 
 def getProtectedRegion(saliency, cutoff = 0.05):               
-    saliency = np.abs(saliency)  # shouldn't be necessary because we do abs when visualizing
+    saliency = np.abs(saliency)  # shouldn't be necessary because we do abs when visualizing.      
     protected_percentile = np.percentile(saliency, cutoff)
-    return saliency <= protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?    
+    if cutoff == 0:
+        protected_percentile = -1
+    return saliency <= protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?  It shouldn't matter u fool
+    # do = so when protected percentile is 100 everything is included. but when protected is 0 we want nothing included  
 
 def VisualizeImageGrayscale(image_3d, percentile=99):
     image_3d = np.abs(image_3d.squeeze())
@@ -83,8 +85,10 @@ def main():
     model = utils.load_model('resnet50')
     model.cuda()
     vanilla_grad_explainer = get_explainer(model, 'vanilla_grad', None)
+    smooth_grad_explainer = get_explainer(model, 'smooth_grad', None)
+    integrate_grad_explainer = get_explainer(model, 'integrate_grad', None)
     sparse_explainer = get_explainer(model, 'sparse', None)
-    explainers = [vanilla_grad_explainer]#, 'random']#, sparse_explainer]
+    explainers = [smooth_grad_explainer, integrate_grad_explainer]#, sparse_explainer]#, 'random']#, sparse_explainer]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -92,13 +96,13 @@ def main():
 
     target = None          
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
-    cutoffs = [10,20,30,40,50,60,70,80,90,100]
+    cutoffs = [0, 10,20,30,40,50,60,70,80,90,100]
     for current_cutoff in cutoffs:
         num_total = 0
         explainers_correct = [0] * len(explainers)
         for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
             num_total = num_total + 1
-            if (num_total > 1000):
+            if (num_total > 100):
                 continue
             raw_img = viz.pil_loader(filename)
             inp = transf(raw_img)            ######################################### TODO ERIC KNOWS THIS        
@@ -119,8 +123,8 @@ def main():
                 if (original_prediction.data.cpu().numpy()[0] == adversarial_prediction.data.cpu().numpy()[0]):
                     explainers_correct[idx] = explainers_correct[idx] + 1
     	
-        print("Current Cutoff: ", current_cutoff)
+        print("Adversary Can Modify: ", current_cutoff)
         for idx, explainer_correct in enumerate(explainers_correct):
-            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 1000)#float(num_total))           
+            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 100)#float(num_total))           
 if __name__ == '__main__':
     main()    
