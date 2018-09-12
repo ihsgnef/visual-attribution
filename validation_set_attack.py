@@ -125,6 +125,8 @@ def main():
     	
         print("Adversary Can Modify: ", current_cutoff)
         for idx, explainer_correct in enumerate(explainers_correct):
-            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 100)#float(num_total))           
+            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 100)#float(num_total))          
+
+why is random broken 
 if __name__ == '__main__':
     main()    
