@@ -5,6 +5,7 @@ import pytablewriter
 
 import viz
 import utils
+from viz import VisualizeImageGrayscale
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
@@ -12,30 +13,36 @@ from explainer.sparse import SparseExplainer
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-from matplotlib import pylab as P
 
 
-def ShowGrayscaleImage(im, title='', ax=None):
-    if ax is None:
-        P.figure()
-        P.axis('off')
+def get_saliency(model, explainer, inp, raw_img,
+                 model_name, method_name, viz_style, filename):
 
-    P.imshow(im, cmap=P.cm.gray, vmin=0, vmax=1)
-    P.title(title)
+    if method_name == 'googlenet':  # swap channel due to caffe weights
+        inp_copy = inp.clone()
+        inp[0] = inp_copy[2]
+        inp[2] = inp_copy[0]
+    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
+    # target = torch.LongTensor([image_class]).cuda()
+    target = None
+    saliency = explainer.explain(inp, target)
+    saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
+    saliency = saliency.cpu().numpy()
 
-def VisualizeImageGrayscale(image_3d, percentile=99):
-    """Returns a 3D tensor as a grayscale 2D tensor.  This method sums a 3D
-    tensor across the absolute value of axis=2, and then clips values at a
-    given percentile.
-    """
-    image_3d = np.abs(image_3d.squeeze())
-    image_2d = torch.sum(image_3d, dim=0)
-
-    image_2d = image_2d.numpy()
-    vmax = np.percentile(image_2d, percentile)
-    vmin = np.min(image_2d)
-    return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
+    if viz_style == 'camshow':
+        viz.plot_cam(np.abs(saliency).max(axis=1).squeeze(),
+                     raw_img, 'jet', alpha=0.5)
+    else:
+        if model_name == 'googlenet' or method_name == 'pattern_net':
+            saliency = saliency.squeeze()[::-1].transpose(1, 2, 0)
+        else:
+            saliency = saliency.squeeze().transpose(1, 2, 0)
+        saliency -= saliency.min()
+        saliency /= (saliency.max() + 1e-20)
+        plt.imshow(saliency, cmap='gray')
+    plt.axis('off')
+    plt.savefig(filename)
 
 
 def lambda_l1_n_iter(input_path, output_path):
@@ -55,30 +62,11 @@ def lambda_l1_n_iter(input_path, output_path):
 
     for cfg_id, cfg in enumerate(all_configs):
         explainer = SparseExplainer(model, **cfg)
-
-        inp = transf(raw_img)
-        if method_name == 'googlenet':  # swap channel due to caffe weights
-            inp_copy = inp.clone()
-            inp[0] = inp_copy[2]
-            inp[2] = inp_copy[0]
-        inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-
-        # target = torch.LongTensor([image_class]).cuda()
-        target = None
-        saliency = explainer.explain(inp, target)
-        saliency = VisualizeImageGrayscale(saliency)
-        saliency = saliency.cpu().numpy()
-
-        if viz_style == 'camshow':
-            saliency = utils.upsample(np.expand_dims(saliency, axis=0),
-                                      (raw_img.height, raw_img.width))
-            viz.plot_cam(saliency, raw_img, 'jet', alpha=0.5)
-        else:
-            plt.imshow(saliency, cmap=P.cm.gray, vmin=0, vmax=1)
-
         filename = '{}.l1_niter.{}.png'.format(output_path, cfg_id)
         all_configs[cfg_id]['output_path'] = filename
-        plt.savefig(filename)
+        inp = transf(raw_img)
+        get_saliency(model, explainer, inp, raw_img, model_name,
+                     method_name, viz_style, filename)
 
     writer = pytablewriter.MarkdownTableWriter()
     writer.table_name = "lambda_l1 vs n_iterations"
@@ -98,7 +86,7 @@ def lambda_l1_n_iter(input_path, output_path):
 def lambda_l1_l2(input_path, output_path):
     model_name = 'resnet50'
     method_name = 'sparse'
-    show_style = 'imshow'
+    viz_style = 'imshow'
     raw_img = viz.pil_loader(input_path)
     transf = get_preprocess(model_name, method_name)
     model = utils.load_model(model_name)
@@ -112,30 +100,11 @@ def lambda_l1_l2(input_path, output_path):
 
     for cfg_id, cfg in enumerate(all_configs):
         explainer = SparseExplainer(model, **cfg)
-
-        inp = transf(raw_img)
-        if method_name == 'googlenet':  # swap channel due to caffe weights
-            inp_copy = inp.clone()
-            inp[0] = inp_copy[2]
-            inp[2] = inp_copy[0]
-        inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-
-        # target = torch.LongTensor([image_class]).cuda()
-        target = None
-        saliency = explainer.explain(inp, target)
-        saliency = VisualizeImageGrayscale(saliency)
-        saliency = saliency.cpu().numpy()
-
-        if show_style == 'camshow':
-            saliency = utils.upsample(np.expand_dims(saliency, axis=0),
-                                      (raw_img.height, raw_img.width))
-            viz.plot_cam(saliency, raw_img, 'jet', alpha=0.5)
-        else:
-            plt.imshow(saliency, cmap=P.cm.gray, vmin=0, vmax=1)
-
         filename = '{}.l1_l2.{}.png'.format(output_path, cfg_id)
         all_configs[cfg_id]['output_path'] = filename
-        plt.savefig(filename)
+        inp = transf(raw_img)
+        get_saliency(model, explainer, inp, raw_img, model_name,
+                     method_name, viz_style, filename)
 
     writer = pytablewriter.MarkdownTableWriter()
     writer.table_name = "lambda_l1 vs lambda l2"
@@ -177,35 +146,10 @@ def baselines(input_path, output_path):
         model = utils.load_model(model_name)
         model.cuda()
         explainer = get_explainer(model, method_name, kwargs)
-
-        inp = transf(raw_img)
-        if method_name == 'googlenet':  # swap channel due to caffe weights
-            inp_copy = inp.clone()
-            inp[0] = inp_copy[2]
-            inp[2] = inp_copy[0]
-        inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-
-        # target = torch.LongTensor([image_class]).cuda()
-        target = None
-        saliency = explainer.explain(inp, target)
-        saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
-        saliency = saliency.cpu().numpy()
-
-        if viz_style == 'camshow':
-            viz.plot_cam(np.abs(saliency).max(axis=1).squeeze(),
-                         raw_img, 'jet', alpha=0.5)
-        else:
-            if model_name == 'googlenet' or method_name == 'pattern_net':
-                saliency = saliency.squeeze()[::-1].transpose(1, 2, 0)
-            else:
-                saliency = saliency.squeeze().transpose(1, 2, 0)
-            saliency -= saliency.min()
-            saliency /= (saliency.max() + 1e-20)
-            plt.imshow(saliency, cmap='gray')
-
-        plt.axis('off')
         filename = '{}.{}.png'.format(output_path, method_name)
-        plt.savefig(filename)
+        inp = transf(raw_img)
+        get_saliency(model, explainer, inp, raw_img, model_name,
+                     method_name, viz_style, filename)
         table_row.append('![]({})'.format(filename))
 
     writer = pytablewriter.MarkdownTableWriter()
@@ -219,9 +163,9 @@ def baselines(input_path, output_path):
 
 
 if __name__ == '__main__':
-    # baselines(input_path='examples/tricycle.png',
-    #           output_path='output/tricycle')
-    # lambda_l1_n_iter(input_path='examples/tricycle.png',
-    #                  output_path='output/tricycle')
+    baselines(input_path='examples/tricycle.png',
+              output_path='output/tricycle')
+    lambda_l1_n_iter(input_path='examples/tricycle.png',
+                     output_path='output/tricycle')
     lambda_l1_l2(input_path='examples/tricycle.png',
                  output_path='output/tricycle')
