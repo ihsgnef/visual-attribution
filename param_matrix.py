@@ -24,22 +24,23 @@ def get_saliency(model, explainer, inp, raw_img,
     # target = torch.LongTensor([image_class]).cuda()
     target = None
     saliency = explainer.explain(inp, target)
-    saliency = utils.upsample(saliency, (raw_img.height, raw_img.width))
-    saliency = saliency.cpu().numpy()
+    smap = utils.upsample(saliency, (raw_img.height, raw_img.width))
+    smap = smap.cpu().numpy()
 
     if viz_style == 'camshow':
-        viz.plot_cam(np.abs(saliency).max(axis=1).squeeze(),
+        viz.plot_cam(np.abs(smap).max(axis=1).squeeze(),
                      raw_img, 'jet', alpha=0.5)
     else:
         if model_name == 'googlenet' or method_name == 'pattern_net':
-            saliency = saliency.squeeze()[::-1].transpose(1, 2, 0)
+            smap = smap.squeeze()[::-1].transpose(1, 2, 0)
         else:
-            saliency = saliency.squeeze().transpose(1, 2, 0)
-        saliency -= saliency.min()
-        saliency /= (saliency.max() + 1e-20)
-        plt.imshow(saliency, cmap='gray')
+            smap = smap.squeeze().transpose(1, 2, 0)
+        smap -= smap.min()
+        smap /= (smap.max() + 1e-20)
+        plt.imshow(smap, cmap='gray')
     plt.axis('off')
     plt.savefig(filename)
+    return saliency
 
 
 def lambda_l1_n_iter(input_path, output_path):
