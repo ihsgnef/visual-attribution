@@ -38,7 +38,7 @@ import glob
 #     # transforms.ToPILImage(),
 #     ])
 
-def perturb(model, X, y=None, epsilon=2 / 255, protected=None):         
+def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
     
     #X_var = Variable(torch.from_numpy(X).cuda(), requires_grad=True, volatile=False)
     #y_var = Variable(torch.LongTensor(y).cuda(), requires_grad=False, volatile=False)
@@ -54,18 +54,20 @@ def perturb(model, X, y=None, epsilon=2 / 255, protected=None):
     grad_sign = X.grad.data.cpu().sign().numpy()
     #################################################################### TODO, we use different maskes
     protected = np.repeat(protected[np.newaxis, :, :], 3, axis=0)
-    grad_sign = grad_sign * protected     
-    
-    perturbed_X = X.data.cpu().numpy() + epsilon * grad_sign                 
+    grad_sign = grad_sign * protected    
+    perturbed_X = X.data.cpu().numpy() + epsilon * grad_sign                
     perturbed_X = np.clip(perturbed_X, 0, 1)    
     X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True)    
     return X
 
-def getProtectedRegion(saliency, cutoff = 0.05):                
-    assert saliency == nps.abs(saliency)    ### shouldn't be different because we normalize beforehand
-    saliency = np.abs(saliency)
+
+#def getProtectedRegion(saliency, cutoff = 0.05):                
+#    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it    
+
+def getProtectedRegion(saliency, cutoff = 0.05):               
+    saliency = np.abs(saliency)  # shouldn't be necessary because we do abs when visualizing
     protected_percentile = np.percentile(saliency, cutoff)
-    return saliency < protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?    
+    return saliency <= protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?    
 
 def VisualizeImageGrayscale(image_3d, percentile=99):
     image_3d = np.abs(image_3d.squeeze())
@@ -81,10 +83,8 @@ def main():
     model = utils.load_model('resnet50')
     model.cuda()
     vanilla_grad_explainer = get_explainer(model, 'vanilla_grad', None)
-    random_explainer = get_explainer(model, 'random', None)
     sparse_explainer = get_explainer(model, 'sparse', None)
-    explainers = [vanilla_grad_explainer, random_explainer]#, sparse_explainer]
-    explainers_correct = [0, 0]
+    explainers = [vanilla_grad_explainer]#, 'random']#, sparse_explainer]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -92,22 +92,26 @@ def main():
 
     target = None          
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
-    
-    num_total = 0
-
-    cutoffs = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0]
+    cutoffs = [10,20,30,40,50,60,70,80,90,100]
     for current_cutoff in cutoffs:
+        num_total = 0
+        explainers_correct = [0] * len(explainers)
         for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
             num_total = num_total + 1
-            if (num_total > 50):
+            if (num_total > 1000):
                 continue
             raw_img = viz.pil_loader(filename)
             inp = transf(raw_img)            ######################################### TODO ERIC KNOWS THIS        
             inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-            for idx, explainer in enumerate(explainers):                        
-                saliency = explainer.explain(inp, target)
-                saliency = VisualizeImageGrayscale(saliency)        
-                protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
+            for idx, explainer in enumerate(explainers): 
+                if explainer == "random":                    
+                    saliency = torch.from_numpy(np.random.rand(3,244,244)).unsqueeze(0).cuda()                        
+                    saliency = VisualizeImageGrayscale(saliency)
+                    protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
+                else:
+                    saliency = explainer.explain(inp, target)
+                    saliency = VisualizeImageGrayscale(saliency)        
+                    protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
                 adversarial_image = perturb(model, inp, protected = protected_region)                
                 
                 original_prediction = model(inp).max(1)[1]        
@@ -116,8 +120,7 @@ def main():
                     explainers_correct[idx] = explainers_correct[idx] + 1
     	
         print("Current Cutoff: ", current_cutoff)
-        print("Epsilon: ", epsilon)
         for idx, explainer_correct in enumerate(explainers_correct):
-            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 50)#float(num_total))           
+            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 1000)#float(num_total))           
 if __name__ == '__main__':
     main()    

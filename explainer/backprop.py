@@ -4,13 +4,6 @@ import torch
 import types
 from explainer import sparse as sparse
 
-class RandomExplainer(object):
-    def __init__(self, model):
-        self.model = model
-
-    def explain(self, inp, ind=None):        
-        return np.random.rand(3,244,244)
-
 class VanillaGradExplainer(object):
     def __init__(self, model):
         self.model = model
