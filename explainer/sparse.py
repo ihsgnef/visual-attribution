@@ -16,8 +16,8 @@ class SparseExplainer(object):
         self.n_iterations = n_iterations
 
     def explain(self, inp, ind=None, return_loss=False):
-        batch_size, n_chs, img_width, img_height = inp.shape
-        img_size = img_width * img_height
+        batch_size, n_chs, img_height, img_width = inp.shape
+        img_size = img_height * img_width
         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
         delta = nn.Parameter(delta, requires_grad=True)
         optimizer = torch.optim.SGD([delta], lr=0.1)
@@ -39,10 +39,9 @@ class SparseExplainer(object):
             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-            #loss = - taylor_1 - self.hessian_coefficient * taylor_2
-            loss = - self.hessian_coefficient * taylor_2
-
-            loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term            
+            loss = - taylor_1 - self.hessian_coefficient * taylor_2
+            # loss = - self.hessian_coefficient * taylor_2
+            loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term
             if i != 0:
                 loss_history['l1'].extend(self.lambda_l1 * l1_term)
                 loss_history['l2'].extend(self.lambda_l2 * l2_term)
@@ -59,7 +58,7 @@ class SparseExplainer(object):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        delta = delta.view((batch_size, n_chs, img_width, img_height))
+        delta = delta.view((batch_size, n_chs, img_height, img_width))
         if return_loss:
             return delta.data.abs(), loss_history
         return delta.data.abs()    # abs as recommended by sohiel
