@@ -71,6 +71,7 @@ def main():
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         ['resnet50', 'gradcam', 'camshow', None],
+        ['resnet50', 'sparse', 'camshow', None],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
         # ['vgg16', 'pattern_net', 'imshow', None],
@@ -87,28 +88,35 @@ def main():
     model = utils.load_model(model_name)
     model.cuda()
 
-    attacker = HessianAttack(model)
+    attacker = HessianAttack(model, hessian_coefficient=1,
+                             lambda_l1=0, lambda_l2=1e5,
+                             n_iterations=10)
     inp = transf(raw_img)
     inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
     delta = attacker.attack(inp)
     delta = delta.cpu()
     delta = (delta - delta.min()) / (delta.max() + 1e-20)
 
-    inp_original = transf(raw_img)
-    inp_perturbd = 0.9 * inp_original + 0.1 * delta.cpu().squeeze(0)
-    img_original = transforms.ToPILImage()(inp_original)
-    img_perturbd = transforms.ToPILImage()(inp_perturbd)
-    img_original.save('{}.inp_org.png'.format(output_path))
-    img_perturbd.save('{}.inp_gho.png'.format(output_path))
+    inp_org = transf(raw_img)
+    inp_gho = 0.9 * inp_org + 0.1 * delta.cpu().squeeze(0)
+    img_org = transforms.ToPILImage()(inp_org)
+    img_gho = transforms.ToPILImage()(inp_gho)
+    filename_o = '{}.inp_org.png'.format(output_path)
+    filename_g = '{}.inp_gho.png'.format(output_path)
+    img_org.resize((raw_img.height, raw_img.width)).save(filename_o)
+    img_gho.resize((raw_img.height, raw_img.width)).save(filename_g)
+    print(get_prediction(model, transf(img_org)))
+    print(get_prediction(model, transf(img_gho)))
 
-    first_row, second_row = [], []
+    first_row = ['![]({})'.format(filename_o)]
+    second_row = ['![]({})'.format(filename_g)]
     for model_name, method_name, viz_style, kwargs in model_methods:
         transf = get_preprocess(model_name, method_name)
         model = utils.load_model(model_name)
         model.cuda()
         explainer = get_explainer(model, method_name, kwargs)
-        input_original = transf(img_original)
-        input_perturbd = transf(img_perturbd)
+        input_original = transf(img_org)
+        input_perturbd = transf(img_gho)
         filename_o = '{}.{}.org.png'.format(output_path, method_name)
         filename_g = '{}.{}.gho.png'.format(output_path, method_name)
         get_saliency(model, explainer, input_original, raw_img,
@@ -120,7 +128,7 @@ def main():
 
     writer = pytablewriter.MarkdownTableWriter()
     writer.table_name = "ghorbani attack"
-    writer.header_list = [row[1] for row in model_methods]
+    writer.header_list = ['input'] + [row[1] for row in model_methods]
     writer.value_matrix = [first_row, second_row]
     with open('{}.ghorbani.md'.format(output_path), 'w') as f:
         writer.stream = f
