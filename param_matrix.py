@@ -1,11 +1,9 @@
-import numpy as np
-import torch
 import itertools
 import pytablewriter
+import numpy as np
 
 import viz
 import utils
-from viz import VisualizeImageGrayscale
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
@@ -17,7 +15,6 @@ from matplotlib import pyplot as plt
 
 def get_saliency(model, explainer, inp, raw_img,
                  model_name, method_name, viz_style, filename):
-
     if method_name == 'googlenet':  # swap channel due to caffe weights
         inp_copy = inp.clone()
         inp[0] = inp_copy[2]
@@ -154,9 +151,8 @@ def baselines(input_path, output_path):
 
     writer = pytablewriter.MarkdownTableWriter()
     writer.table_name = "baselines"
-    writer.header_list = ['input'] + [row[0] for row in model_methods]
-    writer.value_matrix = []
-    writer.value_matrix.append(table_row)
+    writer.header_list = ['input'] + [row[1] for row in model_methods]
+    writer.value_matrix = [table_row]
     with open('{}.baselines.md'.format(output_path), 'w') as f:
         writer.stream = f
         writer.write_table()
