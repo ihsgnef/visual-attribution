@@ -1,6 +1,6 @@
 import numpy as np
 import pytablewriter
-from scipy.stats import entropy
+from scipy.stats import entropy, spearmanr
 
 import torch
 import torch.nn as nn
@@ -79,7 +79,8 @@ def saliency_correlation(saliency_1, saliency_2):
     saliency_2 -= saliency_2.min()
     saliency_2 /= (saliency_2.max() + 1e-20)
 
-    return entropy(saliency_1, saliency_2)
+    # return entropy(saliency_1, saliency_2)
+    return spearmanr(saliency_1, saliency_2)
 
 
 def fuse(inp, delta, mask, epsilon=1e-2, gamma=3e-1):
@@ -157,7 +158,7 @@ def main():
                                     filename_o)
 
         inp_gho, protected = fuse(inp_org, delta.clone(), saliency_org,
-                                  epsilon=5e-2, gamma=1)
+                                  epsilon=5e-2, gamma=0)
         saliency_gho = get_saliency(model, explainer, inp_gho, raw_img,
                                     model_name, method_name, viz_style,
                                     filename_g)
