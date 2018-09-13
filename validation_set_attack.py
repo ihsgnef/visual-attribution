@@ -63,17 +63,17 @@ def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
 #def getProtectedRegion(saliency, cutoff = 0.05):                
 #    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it    
 
-def attackUnImportant(saliency, unimportant = 0.10):               
+def attackUnImportant(saliency, cutoff = 0.10):               
     saliency = np.abs(saliency)  # shouldn't be necessary because we do abs when visualizing.      
-    protected_percentile = np.percentile(saliency, unimportant)
+    protected_percentile = np.percentile(saliency, cutoff)
     if cutoff == 0:
         protected_percentile = -1
     return saliency <= protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?  It shouldn't matter u fool
     # do = so when protected percentile is 100 everything is included. but when protected is 0 we want nothing included  
 
-def attackImportant(saliency, important = 0.10):               
+def attackImportant(saliency, cutoff = 0.10):               
     saliency = np.abs(saliency)
-    protected_percentile = np.percentile(saliency, 1 - important)
+    protected_percentile = np.percentile(saliency, 100 - cutoff)
     if cutoff == 0:
         protected_percentile = -1
     return saliency >= protected_percentile
@@ -96,7 +96,7 @@ def main():
     sparse_explainer = get_explainer(model, 'sparse', None)#kwargs)
     smooth_grad_explainer = get_explainer(model, 'smooth_grad', None)
     integrate_grad_explainer = get_explainer(model, 'integrate_grad', None)
-    explainers = ['random']#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
+    explainers = [smooth_grad_explainer, sparse_explainer, integrate_grad_explainer, vanilla_grad_explainer, 'random']#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -111,7 +111,7 @@ def main():
         explainers_correct = [0] * len(explainers)
         for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
             num_total = num_total + 1
-            if (num_total > 500):
+            if (num_total > 50):
                 continue
             raw_img = viz.pil_loader(filename)
             inp = transf(raw_img)            ######################################### TODO ERIC KNOWS THIS        
@@ -120,11 +120,11 @@ def main():
                 if explainer == "random":                    
                     saliency = torch.from_numpy(np.random.rand(3,224,224)).unsqueeze(0).cuda()                      
                     saliency = VisualizeImageGrayscale(saliency)
-                    protected_region = attackUnImportant(saliency.cpu().numpy(), unimportant=current_cutoff)
+                    protected_region = attackImportant(saliency.cpu().numpy(), cutoff=current_cutoff)
                 else:
                     saliency = explainer.explain(copy.deepcopy(inp), target)
                     saliency = VisualizeImageGrayscale(saliency)        
-                    protected_region = attackUnImportant(saliency.cpu().numpy(), unimportant=current_cutoff)
+                    protected_region = attackImportant(saliency.cpu().numpy(), cutoff=current_cutoff)
 
                 adversarial_image = perturb(model, copy.deepcopy(inp), protected = protected_region)                
                 
@@ -136,8 +136,7 @@ def main():
         print("Adversary Can Modify: ", current_cutoff)
         for idx, explainer_correct in enumerate(explainers_correct):
             print(explainer_correct)
-            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 500.0)#float(num_total))          
+            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 50.0)#float(num_total))          
 
-########################################################################################33why is random broken 
 if __name__ == '__main__':
     main()    
