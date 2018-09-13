@@ -5,7 +5,6 @@ from scipy.stats import entropy, spearmanr
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchvision.transforms as transforms
 
 import viz
 import utils
@@ -102,7 +101,7 @@ def fuse(inp, delta, mask, epsilon=1e-2, gamma=3e-1):
     fused = np.clip(inp + epsilon * delta, 0, 1)
     fused = fused.reshape(n_chs, img_height, img_width)
     fused = torch.FloatTensor(fused)
-    
+
     protected = np.ones_like(inp)
     protected[:, protected_idx] = 0
     protected = protected.reshape(n_chs, img_height, img_width)
@@ -110,12 +109,15 @@ def fuse(inp, delta, mask, epsilon=1e-2, gamma=3e-1):
     return fused, protected
 
 
-def main():
+def run_hessian():
     model_methods = [
         ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'grad_x_input', 'camshow', None],
+        ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'smooth_grad', 'camshow', None],
+        ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'integrate_grad', 'camshow', None],
+        ['resnet50', 'vanilla_grad', 'camshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
@@ -139,7 +141,10 @@ def main():
     attacker = HessianAttack(model, hessian_coefficient=1,
                              lambda_l1=0, lambda_l2=0,
                              n_iterations=10)
+
     inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
+    inp_org = transf(raw_img)
+
     delta = attacker.attack(inp)
     delta = (delta - delta.min()) / (delta.max() + 1e-20)
 
@@ -152,7 +157,6 @@ def main():
         filename_g = '{}.{}.gho.png'.format(output_path, method_name)
         filename_m = '{}.{}.mask.png'.format(output_path, method_name)
 
-        inp_org = transf(raw_img)
         saliency_org = get_saliency(model, explainer, inp_org, raw_img,
                                     model_name, method_name, viz_style,
                                     filename_o)
@@ -191,4 +195,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    run_hessian()

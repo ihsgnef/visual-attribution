@@ -38,7 +38,7 @@ import glob
 #     # transforms.ToPILImage(),
 #     ])
 
-def perturb(model, X, y=None, epsilon=32.0/255.0, protected=None):         
+def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
     
     #X_var = Variable(torch.from_numpy(X).cuda(), requires_grad=True, volatile=False)
     #y_var = Variable(torch.LongTensor(y).cuda(), requires_grad=False, volatile=False)
@@ -85,10 +85,11 @@ def main():
     model = utils.load_model('resnet50')
     model.cuda()
     vanilla_grad_explainer = get_explainer(model, 'vanilla_grad', None)
+    kwargs = {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 0, 'n_iterations': 10} 
+    sparse_explainer = get_explainer(model, 'sparse', None)#kwargs)
     smooth_grad_explainer = get_explainer(model, 'smooth_grad', None)
     integrate_grad_explainer = get_explainer(model, 'integrate_grad', None)
-    sparse_explainer = get_explainer(model, 'sparse', None)
-    explainers = [smooth_grad_explainer, integrate_grad_explainer]#, sparse_explainer]#, 'random']#, sparse_explainer]
+    explainers = ['random']#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -96,37 +97,39 @@ def main():
 
     target = None          
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
-    cutoffs = [0, 10,20,30,40,50,60,70,80,90,100]
+#    cutoffs = [0, 10,20,30,40,50,60,70,80,90,100]
+    cutoffs = [10]
     for current_cutoff in cutoffs:
         num_total = 0
         explainers_correct = [0] * len(explainers)
         for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
             num_total = num_total + 1
-            if (num_total > 100):
+            if (num_total > 500):
                 continue
             raw_img = viz.pil_loader(filename)
             inp = transf(raw_img)            ######################################### TODO ERIC KNOWS THIS        
             inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
             for idx, explainer in enumerate(explainers): 
                 if explainer == "random":                    
-                    saliency = torch.from_numpy(np.random.rand(3,244,244)).unsqueeze(0).cuda()                        
+                    saliency = torch.from_numpy(np.random.rand(3,224,224)).unsqueeze(0).cuda()                      
                     saliency = VisualizeImageGrayscale(saliency)
                     protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
                 else:
-                    saliency = explainer.explain(inp, target)
+                    saliency = explainer.explain(copy.deepcopy(inp), target)
                     saliency = VisualizeImageGrayscale(saliency)        
                     protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
-                adversarial_image = perturb(model, inp, protected = protected_region)                
+                adversarial_image = perturb(model, copy.deepcopy(inp), protected = protected_region)                
                 
                 original_prediction = model(inp).max(1)[1]        
-                adversarial_prediction = model(adversarial_image).max(1)[1]            
+                adversarial_prediction = model(adversarial_image).max(1)[1]           
                 if (original_prediction.data.cpu().numpy()[0] == adversarial_prediction.data.cpu().numpy()[0]):
                     explainers_correct[idx] = explainers_correct[idx] + 1
     	
         print("Adversary Can Modify: ", current_cutoff)
         for idx, explainer_correct in enumerate(explainers_correct):
-            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 100)#float(num_total))          
+            print(explainer_correct)
+            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 500.0)#float(num_total))          
 
-why is random broken 
+########################################################################################33why is random broken 
 if __name__ == '__main__':
     main()    
