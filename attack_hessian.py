@@ -19,11 +19,13 @@ from matplotlib import pyplot as plt
 
 class HessianAttack(object):
 
-    def __init__(self, model, hessian_coefficient=1,
+    def __init__(self, model,
+                 lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10):
         self.model = model
-        self.hessian_coefficient = hessian_coefficient
+        self.lambda_t1 = lambda_t1
+        self.lambda_t2 = lambda_t2
         self.lambda_l1 = lambda_l1
         self.lambda_l2 = lambda_l2
         self.n_iterations = n_iterations
@@ -49,8 +51,14 @@ class HessianAttack(object):
             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-            loss = taylor_1 - self.hessian_coefficient * taylor_2
-            loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term
+
+            loss = (
+                + self.lambda_t1 * taylor_1
+                - self.lambda_t2 * taylor_2
+                + self.lambda_l1 * l1_term
+                + self.lambda_l2 * l2_term
+            )
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -138,9 +146,11 @@ def run_hessian():
     model = utils.load_model(model_name)
     model.cuda()
 
-    attacker = HessianAttack(model, hessian_coefficient=1,
-                             lambda_l1=0, lambda_l2=0,
-                             n_iterations=10)
+    attacker = HessianAttack(
+        model,
+        lambda_t1=1, lambda_t2=1,
+        lambda_l1=0, lambda_l2=0,
+        n_iterations=10)
 
     inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
     inp_org = transf(raw_img)
@@ -161,8 +171,9 @@ def run_hessian():
                                     model_name, method_name, viz_style,
                                     filename_o)
 
-        inp_gho, protected = fuse(inp_org, delta.clone(), saliency_org,
-                                  epsilon=5e-2, gamma=0.3)
+        inp_gho, protected = fuse(
+            inp_org, delta.clone(), saliency_org,
+            epsilon=3e-2, gamma=0.3)
         saliency_gho = get_saliency(model, explainer, inp_gho, raw_img,
                                     model_name, method_name, viz_style,
                                     filename_g)

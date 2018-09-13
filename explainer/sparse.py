@@ -5,11 +5,13 @@ from collections import defaultdict
 
 
 class SparseExplainer(object):
-    def __init__(self, model, hessian_coefficient=1,
+    def __init__(self, model,
+                 lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10):
         self.model = model
-        self.hessian_coefficient = hessian_coefficient
+        self.lambda_t1 = lambda_t1
+        self.lambda_t2 = lambda_t2
         self.lambda_l1 = lambda_l1
         self.lambda_l2 = lambda_l2
         self.n_iterations = n_iterations
@@ -38,22 +40,29 @@ class SparseExplainer(object):
             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-            loss = - taylor_1 - self.hessian_coefficient * taylor_2
-            # loss = - self.hessian_coefficient * taylor_2
-            loss += self.lambda_l1 * l1_term + self.lambda_l2 * l2_term
+
+            loss = (
+                - self.lambda_t1 * taylor_1
+                - self.lambda_t2 * taylor_2
+                + self.lambda_l1 * l1_term
+                + self.lambda_l2 * l2_term
+            )
+
             if i != 0:
                 loss_history['l1'].extend(self.lambda_l1 * l1_term)
                 loss_history['l2'].extend(self.lambda_l2 * l2_term)
-                loss_history['grad'].extend(- taylor_1)
-                loss_history['hessian'].extend(- self.hessian_coefficient * taylor_2)
+                loss_history['grad'].extend(- self.lambda_t1 * taylor_1)
+                loss_history['hessian'].extend(- self.lambda_t2 * taylor_2)
             else:
                 loss_history['l1'] = [self.lambda_l1 * l1_term]
                 loss_history['l2'] = [self.lambda_l2 * l2_term]
-                loss_history['grad'] = [- taylor_1]
-                loss_history['hessian'] = [- self.hessian_coefficient * taylor_2]
+                loss_history['grad'] = [- self.lambda_t1 * taylor_1]
+                loss_history['hessian'] = [- self.lambda_t2 * taylor_2]
+
             # print(taylor_1.data.cpu().numpy(), taylor_2.data.cpu().numpy(),
             #       l1_term.data.cpu().numpy(), l2_term.data.cpu().numpy())
             # print(loss)
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
