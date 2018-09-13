@@ -7,6 +7,7 @@ import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
+from viz import VisualizeImageGrayscale
 
 import matplotlib
 matplotlib.use('Agg')
@@ -40,6 +41,8 @@ def get_saliency(model, explainer, inp, raw_img,
         plt.imshow(smap, cmap='gray')
     plt.axis('off')
     plt.savefig(filename)
+
+    saliency = VisualizeImageGrayscale(saliency)
     return saliency
 
 
