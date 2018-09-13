@@ -88,59 +88,59 @@ class NewHessianAttack(object):
         return fused
 
 
-class HessianAttack(object):
-
-    def __init__(self, model,
-                 lambda_t1=1, lambda_t2=1,
-                 lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10, optim='sgd', lr=1e-2):
-        self.model = model
-        self.lambda_t1 = lambda_t1
-        self.lambda_t2 = lambda_t2
-        self.lambda_l1 = lambda_l1
-        self.lambda_l2 = lambda_l2
-        self.n_iterations = n_iterations
-        self.optim = optim.lower()
-        self.lr = lr
-
-    def attack(self, inp, ind=None, return_loss=False):
-        batch_size, n_chs, img_height, img_width = inp.shape
-        img_size = img_height * img_width
-        delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
-        delta = nn.Parameter(delta, requires_grad=True)
-
-        if self.optim == 'sgd':
-            optimizer = torch.optim.SGD([delta], lr=self.lr)
-        elif self.optim == 'adam':
-            optimizer = torch.optim.Adam([delta], lr=self.lr)
-
-        for i in range(self.n_iterations):
-            output = self.model(inp)
-            ind = output.max(1)[1]
-            out_loss = F.cross_entropy(output, ind)
-            inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
-            inp_grad = inp_grad.view((batch_size, n_chs, img_size))
-            hessian_delta_vp, = torch.autograd.grad(
-                    inp_grad.dot(delta).sum(), inp, create_graph=True)
-            hessian_delta_vp = hessian_delta_vp.view(
-                    (batch_size, n_chs, img_size))
-            taylor_1 = inp_grad.dot(delta).sum()
-            taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
-            l1_term = F.l1_loss(delta, torch.zeros_like(delta))
-            l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-
-            loss = (
-                # + self.lambda_t1 * taylor_1
-                - self.lambda_t2 * taylor_2
-                # + self.lambda_l1 * l1_term
-                # + self.lambda_l2 * l2_term
-            )
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        delta = delta.view((batch_size, n_chs, img_height, img_width))
-        return delta.data
+# class HessianAttack(object):
+# 
+#     def __init__(self, model,
+#                  lambda_t1=1, lambda_t2=1,
+#                  lambda_l1=1e4, lambda_l2=1e4,
+#                  n_iterations=10, optim='sgd', lr=1e-2):
+#         self.model = model
+#         self.lambda_t1 = lambda_t1
+#         self.lambda_t2 = lambda_t2
+#         self.lambda_l1 = lambda_l1
+#         self.lambda_l2 = lambda_l2
+#         self.n_iterations = n_iterations
+#         self.optim = optim.lower()
+#         self.lr = lr
+# 
+#     def attack(self, inp, ind=None, return_loss=False):
+#         batch_size, n_chs, img_height, img_width = inp.shape
+#         img_size = img_height * img_width
+#         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
+#         delta = nn.Parameter(delta, requires_grad=True)
+# 
+#         if self.optim == 'sgd':
+#             optimizer = torch.optim.SGD([delta], lr=self.lr)
+#         elif self.optim == 'adam':
+#             optimizer = torch.optim.Adam([delta], lr=self.lr)
+# 
+#         for i in range(self.n_iterations):
+#             output = self.model(inp)
+#             ind = output.max(1)[1]
+#             out_loss = F.cross_entropy(output, ind)
+#             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
+#             inp_grad = inp_grad.view((batch_size, n_chs, img_size))
+#             hessian_delta_vp, = torch.autograd.grad(
+#                     inp_grad.dot(delta).sum(), inp, create_graph=True)
+#             hessian_delta_vp = hessian_delta_vp.view(
+#                     (batch_size, n_chs, img_size))
+#             taylor_1 = inp_grad.dot(delta).sum()
+#             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
+#             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
+#             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
+# 
+#             loss = (
+#                 # + self.lambda_t1 * taylor_1
+#                 - self.lambda_t2 * taylor_2
+#                 # + self.lambda_l1 * l1_term
+#                 # + self.lambda_l2 * l2_term
+#             )
+# 
+#             optimizer.zero_grad()
+#             loss.backward()
+#             optimizer.step()
+#         delta = delta.view((batch_size, n_chs, img_height, img_width))
+#         return delta.data
 
 
 def get_prediction(model, inp):
@@ -203,7 +203,7 @@ def fuse(inp, delta, mask=None, sign=False, epsilon=1e-2, gamma=3e-1):
 def run_hessian():
     sparse_args = {
         'lambda_t1': 1,
-        'lambda_t2': 1,
+        'lambda_t2': -1,
         'lambda_l1': 1e4,
         'lambda_l2': 1e4,
         'n_iterations': 10,
@@ -215,11 +215,11 @@ def run_hessian():
     # fuse_gamma = 0
 
     configs = [
+        ['resnet50', 'sparse', 'camshow', sparse_args],
         ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'grad_x_input', 'camshow', None],
         ['resnet50', 'smooth_grad', 'camshow', None],
         ['resnet50', 'integrate_grad', 'camshow', None],
-        ['resnet50', 'sparse', 'camshow', sparse_args],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
@@ -236,6 +236,7 @@ def run_hessian():
     transf = get_preprocess(model_name, method_name)
     model = utils.load_model(model_name)
     model_softplus = resnet50(pretrained=True)
+    model.eval()
     model_softplus.eval()
     model.cuda()
     model_softplus.cuda()
@@ -247,7 +248,7 @@ def run_hessian():
             lambda_t2=1,
             lambda_l1=0,
             lambda_l2=0,
-            n_iterations=300,
+            n_iterations=30,
             optim='sgd',
             lr=1e-2,
             epsilon=2 / 255
