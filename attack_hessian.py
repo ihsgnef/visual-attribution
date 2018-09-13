@@ -13,6 +13,7 @@ import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from param_matrix import get_saliency
+from resnet import resnet50
 
 import matplotlib
 matplotlib.use('Agg')
@@ -68,6 +69,7 @@ class NewHessianAttack(object):
             ind = output.max(1)[1]
 
             if ind.data.cpu().numpy() != ind_org:
+                print('stop', i)
                 accu_perturb = prev_perturb
                 break
 
@@ -75,12 +77,13 @@ class NewHessianAttack(object):
             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
             inp_grad = inp_grad.view((batch_size, n_chs, img_size))
 
-            delta, = torch.autograd.grad(inp_grad.sum(), inp)
+            delta, = torch.autograd.grad(-inp_grad.sum(), inp)
             delta = delta.view((batch_size, n_chs, img_height, img_width))
             delta = delta.sign().data.cpu().numpy()
+            prev_perturb = accu_perturb
             accu_perturb = accu_perturb + step_size * delta
 
-        fused = np.clip(inp_org + np.sign(accu_perturb), 0, 1)
+        fused = np.clip(inp_org + accu_perturb, 0, 1)
         fused = torch.FloatTensor(fused).cuda().squeeze()
         return fused
 
@@ -232,11 +235,14 @@ def run_hessian():
     raw_img = viz.pil_loader(input_path)
     transf = get_preprocess(model_name, method_name)
     model = utils.load_model(model_name)
+    model_softplus = resnet50(pretrained=True)
+    model_softplus.eval()
     model.cuda()
+    model_softplus.cuda()
 
     attackers = [
         (NewHessianAttack(
-            model,
+            model_softplus,
             lambda_t1=0,
             lambda_t2=1,
             lambda_l1=0,
@@ -253,7 +259,6 @@ def run_hessian():
     for atk, attack_name in attackers:
         inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
         delta = atk.attack(inp)
-
         attacks.append((delta, attack_name))
 
     rows = []
