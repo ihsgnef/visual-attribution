@@ -92,12 +92,12 @@ def run_noise():
     #                          n_iterations=10)
 
     inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
-    inp_org = transf(raw_img)
-
     noisy_inp = noise_attacker.get_noisy(inp)
 
     rows = []
     for model_name, method_name, viz_style, kwargs in model_methods:
+        inp_org = transf(raw_img)
+
         explainer = get_explainer(model, method_name, kwargs)
         transf = get_preprocess(model_name, method_name)
 
@@ -114,7 +114,8 @@ def run_noise():
         #                             model_name, method_name, viz_style,
         #                             filename_g)
 
-        saliency_gho = get_saliency(model, explainer, deepcopy(noisy_inp.data),
+        saliency_gho = get_saliency(model, explainer,
+                                    deepcopy(noisy_inp.data),
                                     raw_img, model_name, method_name,
                                     viz_style, filename_g)
 
@@ -144,3 +145,7 @@ def run_noise():
     with open('{}.ghorbani.md'.format(output_path), 'w') as f:
         writer.stream = f
         writer.write_table()
+
+
+if __name__ == '__main__':
+    run_noise()

@@ -1,6 +1,7 @@
 import numpy as np
 import pytablewriter
 from scipy.stats import entropy, spearmanr
+from copy import deepcopy
 
 import torch
 import torch.nn as nn
@@ -22,21 +23,27 @@ class HessianAttack(object):
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10):
+                 n_iterations=10, optim='sgd', lr=1e-2):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
         self.lambda_l1 = lambda_l1
         self.lambda_l2 = lambda_l2
         self.n_iterations = n_iterations
+        self.optim = optim.lower()
+        self.lr = lr
 
     def attack(self, inp, ind=None, return_loss=False):
         batch_size, n_chs, img_height, img_width = inp.shape
         img_size = img_height * img_width
         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
         delta = nn.Parameter(delta, requires_grad=True)
-        optimizer = torch.optim.SGD([delta], lr=0.1)
-        # optimizer = torch.optim.Adam([delta], lr=0.0001)
+
+        if self.optim == 'sgd':
+            optimizer = torch.optim.SGD([delta], lr=self.lr)
+        elif self.optim == 'adam':
+            optimizer = torch.optim.Adam([delta], lr=self.lr)
+
         for i in range(self.n_iterations):
             output = self.model(inp)
             ind = output.max(1)[1]
@@ -118,22 +125,40 @@ def fuse(inp, delta, mask, epsilon=1e-2, gamma=3e-1):
 
 
 def run_hessian():
-    model_methods = [
+    sparse_args = {
+        'lambda_t1': 1,
+        'lambda_t2': 1,
+        'lambda_l1': 1e4,
+        'lambda_l2': 1e4,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 1e-2,
+    }
+
+    attacker_args = {
+        'lambda_t1': 1,
+        'lambda_t2': 1,
+        'lambda_l1': 0,
+        'lambda_l2': 0,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 1e-2,
+    }
+
+    fuse_epsilon = 3e-2
+    fuse_gamma = 0
+
+    configs = [
         ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'grad_x_input', 'camshow', None],
-        ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'smooth_grad', 'camshow', None],
-        ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'integrate_grad', 'camshow', None],
-        ['resnet50', 'vanilla_grad', 'camshow', None],
+        ['resnet50', 'sparse', 'camshow', sparse_args],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
-        ['resnet50', 'sparse', 'camshow', {'n_iterations': 50}],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
-        # ['vgg16', 'pattern_net', 'imshow', None],
-        # ['vgg16', 'pattern_lrp', 'camshow', None],
     ]
 
     input_path = 'examples/tricycle.png'
@@ -148,18 +173,19 @@ def run_hessian():
 
     attacker = HessianAttack(
         model,
-        lambda_t1=1, lambda_t2=1,
-        lambda_l1=0, lambda_l2=0,
-        n_iterations=10)
+        **attacker_args
+    )
 
     inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
-    inp_org = transf(raw_img)
-
     delta = attacker.attack(inp)
     delta = (delta - delta.min()) / (delta.max() + 1e-20)
 
     rows = []
-    for model_name, method_name, viz_style, kwargs in model_methods:
+    for model_name, method_name, viz_style, kwargs in configs:
+        inp_org = transf(raw_img)
+        attack = delta.clone()
+        # attack = deepcopy(delta)
+
         explainer = get_explainer(model, method_name, kwargs)
         transf = get_preprocess(model_name, method_name)
 
@@ -172,8 +198,9 @@ def run_hessian():
                                     filename_o)
 
         inp_gho, protected = fuse(
-            inp_org, delta.clone(), saliency_org,
-            epsilon=3e-2, gamma=0.3)
+            inp_org, attack, saliency_org,
+            epsilon=fuse_epsilon, gamma=fuse_gamma)
+
         saliency_gho = get_saliency(model, explainer, inp_gho, raw_img,
                                     model_name, method_name, viz_style,
                                     filename_g)

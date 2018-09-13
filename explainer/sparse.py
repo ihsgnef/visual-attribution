@@ -8,21 +8,27 @@ class SparseExplainer(object):
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10):
+                 n_iterations=10, optim='sgd', lr=1e-2):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
         self.lambda_l1 = lambda_l1
         self.lambda_l2 = lambda_l2
         self.n_iterations = n_iterations
+        self.optim = optim.lower()
+        self.lr = lr
 
     def explain(self, inp, ind=None, return_loss=False):
         batch_size, n_chs, img_height, img_width = inp.shape
         img_size = img_height * img_width
         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
         delta = nn.Parameter(delta, requires_grad=True)
-        optimizer = torch.optim.SGD([delta], lr=0.01)
-        # optimizer = torch.optim.Adam([delta], lr=0.0001)
+
+        if self.optim == 'sgd':
+            optimizer = torch.optim.SGD([delta], lr=self.lr)
+        elif self.optim == 'adam':
+            optimizer = torch.optim.Adam([delta], lr=self.lr)
+
         loss_history = defaultdict(list)
         for i in range(self.n_iterations):
             output = self.model(inp)
