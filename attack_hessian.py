@@ -1,6 +1,8 @@
-import torch
+import numpy as np
 import pytablewriter
+from scipy.stats import entropy
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
@@ -9,9 +11,11 @@ import viz
 import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
-from explainer.sparse import SparseExplainer
-from explainer.backprop import VanillaGradExplainer
 from param_matrix import get_saliency
+
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
 
 
 class HessianAttack(object):
@@ -62,15 +66,58 @@ def get_prediction(model, inp):
     return ind
 
 
+def saliency_correlation(saliency_1, saliency_2):
+    saliency_1 = saliency_1.cpu().numpy()
+    saliency_2 = saliency_2.cpu().numpy()
+    saliency_1 = np.abs(saliency_1).max(axis=1).squeeze()
+    saliency_2 = np.abs(saliency_2).max(axis=1).squeeze()
+    saliency_1 = saliency_1.ravel()
+    saliency_2 = saliency_2.ravel()
+
+    saliency_1 -= saliency_1.min()
+    saliency_1 /= (saliency_1.max() + 1e-20)
+    saliency_2 -= saliency_2.min()
+    saliency_2 /= (saliency_2.max() + 1e-20)
+
+    return entropy(saliency_1, saliency_2)
+
+
+def fuse(inp, delta, mask, epsilon=1e-2, gamma=3e-1):
+    '''use saliency as a mask and fuse inp with delta'''
+    inp = inp.cpu().squeeze(0).numpy()
+    delta = delta.cpu().squeeze(0).numpy()
+    mask = mask.cpu().squeeze(0).numpy()
+    n_chs, img_height, img_width = inp.shape
+    img_size = img_height * img_width
+    inp = inp.reshape(n_chs, img_size)
+    delta = delta.reshape(n_chs, img_size)
+    mask = mask.reshape(n_chs, img_size)
+
+    mask = np.abs(mask).max(axis=0)
+    mask_idx = mask.argsort()[::-1]  # descend
+    protected_idx = mask_idx[:int(gamma * mask_idx.size)]
+    print(protected_idx.size)
+    delta[:, protected_idx] = 0
+    fused = np.clip(inp + epsilon * delta, 0, 1)
+    fused = fused.reshape(n_chs, img_height, img_width)
+    fused = torch.FloatTensor(fused)
+    
+    protected = np.ones_like(inp)
+    protected[:, protected_idx] = 0
+    protected = protected.reshape(n_chs, img_height, img_width)
+    protected = torch.FloatTensor(protected)
+    return fused, protected
+
+
 def main():
     model_methods = [
         ['resnet50', 'vanilla_grad', 'camshow', None],
         ['resnet50', 'grad_x_input', 'camshow', None],
-        ['resnet50', 'saliency', 'camshow', None],
         ['resnet50', 'smooth_grad', 'camshow', None],
+        ['resnet50', 'integrate_grad', 'camshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
-        ['resnet50', 'gradcam', 'camshow', None],
+        # ['resnet50', 'gradcam', 'camshow', None],
         ['resnet50', 'sparse', 'camshow', None],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
@@ -91,45 +138,52 @@ def main():
     attacker = HessianAttack(model, hessian_coefficient=1,
                              lambda_l1=0, lambda_l2=1e5,
                              n_iterations=10)
-    inp = transf(raw_img)
-    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
+    inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
     delta = attacker.attack(inp)
-    delta = delta.cpu()
     delta = (delta - delta.min()) / (delta.max() + 1e-20)
 
-    inp_org = transf(raw_img)
-    inp_gho = 0.9 * inp_org + 0.1 * delta.cpu().squeeze(0)
-    img_org = transforms.ToPILImage()(inp_org)
-    img_gho = transforms.ToPILImage()(inp_gho)
-    filename_o = '{}.inp_org.png'.format(output_path)
-    filename_g = '{}.inp_gho.png'.format(output_path)
-    img_org.resize((raw_img.height, raw_img.width)).save(filename_o)
-    img_gho.resize((raw_img.height, raw_img.width)).save(filename_g)
-    print(get_prediction(model, transf(img_org)))
-    print(get_prediction(model, transf(img_gho)))
-
-    first_row = ['![]({})'.format(filename_o)]
-    second_row = ['![]({})'.format(filename_g)]
+    rows = []
     for model_name, method_name, viz_style, kwargs in model_methods:
-        transf = get_preprocess(model_name, method_name)
-        model = utils.load_model(model_name)
-        model.cuda()
         explainer = get_explainer(model, method_name, kwargs)
-        input_original = transf(img_org)
-        input_perturbd = transf(img_gho)
+        transf = get_preprocess(model_name, method_name)
+
         filename_o = '{}.{}.org.png'.format(output_path, method_name)
         filename_g = '{}.{}.gho.png'.format(output_path, method_name)
-        get_saliency(model, explainer, input_original, raw_img,
-                     model_name, method_name, viz_style, filename_o)
-        get_saliency(model, explainer, input_perturbd, raw_img,
-                     model_name, method_name, viz_style, filename_g)
-        first_row.append('![]({})'.format(filename_o))
-        second_row.append('![]({})'.format(filename_g))
+        filename_m = '{}.{}.mask.png'.format(output_path, method_name)
+
+        inp_org = transf(raw_img)
+        saliency_org = get_saliency(model, explainer, inp_org, raw_img,
+                                    model_name, method_name, viz_style,
+                                    filename_o)
+
+        inp_gho, protected = fuse(inp_org, delta.clone(), saliency_org,
+                                  epsilon=5e-2, gamma=1)
+        saliency_gho = get_saliency(model, explainer, inp_gho, raw_img,
+                                    model_name, method_name, viz_style,
+                                    filename_g)
+
+        protected = utils.upsample(protected.unsqueeze(0),
+                                   (raw_img.height, raw_img.width))
+        protected = protected.cpu().numpy()
+        protected = np.abs(protected).max(axis=1).squeeze()
+        plt.imshow(protected, cmap='jet')
+        plt.axis('off')
+        plt.savefig(filename_m)
+
+        print(method_name)
+        print(get_prediction(model, inp_org).data.cpu().numpy()[0])
+        print(get_prediction(model, inp_gho).data.cpu().numpy()[0])
+        print(saliency_correlation(saliency_org, saliency_gho))
+        print()
+
+        files = [filename_o, filename_g, filename_m]
+        rows.append([method_name] + ['![]({})'.format(x) for x in files])
 
     writer = pytablewriter.MarkdownTableWriter()
     writer.table_name = "ghorbani attack"
-    writer.header_list = ['input'] + [row[1] for row in model_methods]
-    writer.value_matrix = [first_row, second_row]
+    writer.header_list = ['method', 'original saliency', 'perturbed saliency',
+                          'protected']
+    writer.value_matrix = rows
     with open('{}.ghorbani.md'.format(output_path), 'w') as f:
         writer.stream = f
         writer.write_table()
