@@ -85,11 +85,11 @@ def main():
     model = utils.load_model('resnet50')
     model.cuda()
     vanilla_grad_explainer = get_explainer(model, 'vanilla_grad', None)
-    #kwargs = {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 0, 'n_iterations': 10} 
-    sparse_explainer = get_explainer(model, 'sparse', kwargs)
+    kwargs = {'hessian_coefficient': 1, 'lambda_l1': 1e4, 'lambda_l2': 0, 'n_iterations': 10} 
+    sparse_explainer = get_explainer(model, 'sparse', None)#kwargs)
     smooth_grad_explainer = get_explainer(model, 'smooth_grad', None)
     integrate_grad_explainer = get_explainer(model, 'integrate_grad', None)
-    explainers = [sparse_explainer]#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
+    explainers = ['random']#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -111,7 +111,7 @@ def main():
             inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
             for idx, explainer in enumerate(explainers): 
                 if explainer == "random":                    
-                    saliency = torch.from_numpy(np.random.rand(3,244,244)).unsqueeze(0).cuda()                        
+                    saliency = torch.from_numpy(np.random.rand(3,224,224)).unsqueeze(0).cuda()                      
                     saliency = VisualizeImageGrayscale(saliency)
                     protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
                 else:
