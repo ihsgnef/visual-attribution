@@ -9,6 +9,7 @@ import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
+from resnet_softplus import *
 
 import os
 import matplotlib
@@ -267,9 +268,9 @@ def lambda_l1_l2():
 
 def main():
     default_methods = [
-        #['resnet50', 'vanilla_grad', 'imshow', None],
+        ['resnet50', 'vanilla_grad', 'imshow', None],
         #['resnet50', 'sparse_guided_backprop', 'imshow', None],
-        ['resnet50', 'sparse', 'imshow', None],
+        #['resnet50', 'sparse', 'imshow', None],
         # ['resnet50', 'grad_x_input', 'imshow', None],
         # ['resnet50', 'saliency', 'imshow', None],
         # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
@@ -337,7 +338,8 @@ def main():
     for model_name, method_name, _, kwargs in model_methods:
         print(method_name)
         transf = get_preprocess(model_name, method_name)
-        model = utils.load_model(model_name)
+        #model = utils.load_model(model_name)
+        model = softplus_resnet50(pretrained=True).eval()
         model.cuda()
         explainer = get_explainer(model, method_name, kwargs)
 
@@ -396,4 +398,4 @@ if __name__ == '__main__':
     #baselines()
     #lambda_l1_l2()
     #lambda_l1_n_iterations()
-    lambda_l1_l2()
+    #lambda_l1_l2()
