@@ -63,13 +63,20 @@ def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
 #def getProtectedRegion(saliency, cutoff = 0.05):                
 #    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it    
 
-def getProtectedRegion(saliency, cutoff = 0.05):               
+def attackUnImportant(saliency, unimportant = 0.10):               
     saliency = np.abs(saliency)  # shouldn't be necessary because we do abs when visualizing.      
-    protected_percentile = np.percentile(saliency, cutoff)
+    protected_percentile = np.percentile(saliency, unimportant)
     if cutoff == 0:
         protected_percentile = -1
     return saliency <= protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?  It shouldn't matter u fool
     # do = so when protected percentile is 100 everything is included. but when protected is 0 we want nothing included  
+
+def attackImportant(saliency, important = 0.10):               
+    saliency = np.abs(saliency)
+    protected_percentile = np.percentile(saliency, 1 - important)
+    if cutoff == 0:
+        protected_percentile = -1
+    return saliency >= protected_percentile
 
 def VisualizeImageGrayscale(image_3d, percentile=99):
     image_3d = np.abs(image_3d.squeeze())
@@ -113,11 +120,12 @@ def main():
                 if explainer == "random":                    
                     saliency = torch.from_numpy(np.random.rand(3,224,224)).unsqueeze(0).cuda()                      
                     saliency = VisualizeImageGrayscale(saliency)
-                    protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
+                    protected_region = attackUnImportant(saliency.cpu().numpy(), unimportant=current_cutoff)
                 else:
                     saliency = explainer.explain(copy.deepcopy(inp), target)
                     saliency = VisualizeImageGrayscale(saliency)        
-                    protected_region = getProtectedRegion(saliency.cpu().numpy(), cutoff=current_cutoff)
+                    protected_region = attackUnImportant(saliency.cpu().numpy(), unimportant=current_cutoff)
+
                 adversarial_image = perturb(model, copy.deepcopy(inp), protected = protected_region)                
                 
                 original_prediction = model(inp).max(1)[1]        
