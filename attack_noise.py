@@ -23,6 +23,9 @@ class NoiseAttack(object):
     def __init__(self, epsilon=2.0/255.0):
         self.epsilon = epsilon
 
+    def attack(self, inp):
+        return self.get_noisy(self, inp)
+
     def get_noisy(self, inp):
         grad_sign = 2 * np.random.randint(2, size=(3, 224, 224)) - 1   # random -1,1 matrix
         perturbed_inp = inp.data.squeeze().cpu().numpy() + grad_sign * self.epsilon
