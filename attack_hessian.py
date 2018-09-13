@@ -119,7 +119,7 @@ def main():
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
-        ['resnet50', 'sparse', 'camshow', None],
+        ['resnet50', 'sparse', 'camshow', {'n_iterations': 50}],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
         # ['vgg16', 'pattern_net', 'imshow', None],
@@ -137,7 +137,7 @@ def main():
     model.cuda()
 
     attacker = HessianAttack(model, hessian_coefficient=1,
-                             lambda_l1=0, lambda_l2=1e5,
+                             lambda_l1=0, lambda_l2=0,
                              n_iterations=10)
     inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
     delta = attacker.attack(inp)
@@ -158,7 +158,7 @@ def main():
                                     filename_o)
 
         inp_gho, protected = fuse(inp_org, delta.clone(), saliency_org,
-                                  epsilon=5e-2, gamma=0)
+                                  epsilon=5e-2, gamma=0.3)
         saliency_gho = get_saliency(model, explainer, inp_gho, raw_img,
                                     model_name, method_name, viz_style,
                                     filename_g)

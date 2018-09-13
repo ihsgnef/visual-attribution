@@ -6,7 +6,6 @@ from collections import defaultdict
 
 class SparseExplainer(object):
     def __init__(self, model, hessian_coefficient=1,
-
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10):
         self.model = model
@@ -20,7 +19,7 @@ class SparseExplainer(object):
         img_size = img_height * img_width
         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
         delta = nn.Parameter(delta, requires_grad=True)
-        optimizer = torch.optim.SGD([delta], lr=0.1)
+        optimizer = torch.optim.SGD([delta], lr=0.01)
         # optimizer = torch.optim.Adam([delta], lr=0.0001)
         loss_history = defaultdict(list)
         for i in range(self.n_iterations):
