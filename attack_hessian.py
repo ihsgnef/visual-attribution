@@ -1,7 +1,6 @@
 import numpy as np
 import pytablewriter
-from scipy.stats import entropy, spearmanr
-from copy import deepcopy
+from scipy.stats import spearmanr
 
 import torch
 import torch.nn as nn
@@ -28,11 +27,11 @@ class NoiseAttack(object):
     def attack(self, inp):
         inp = inp.data.cpu().numpy()
         noise = 2 * np.random.randint(2, size=inp.shape) - 1
-        # return torch.from_numpy(noise).float().cuda()
-        perturb = np.sign(noise)
-        fused = np.clip(inp + self.epsilon * perturb, 0, 1)
-        fused = torch.FloatTensor(fused).cuda().squeeze()
-        return fused
+        perturb = np.sign(noise) * self.epsilon
+        return torch.FloatTensor(perturb).cuda()
+        # fused = np.clip(inp + perturb, 0, 1)
+        # fused = torch.FloatTensor(fused).cuda().squeeze()
+        # return fused
 
 
 class NewHessianAttack(object):
@@ -83,13 +82,14 @@ class NewHessianAttack(object):
             prev_perturb = accu_perturb
             accu_perturb = accu_perturb + step_size * delta
 
-        fused = np.clip(inp_org + accu_perturb, 0, 1)
-        fused = torch.FloatTensor(fused).cuda().squeeze()
-        return fused
+        # fused = np.clip(inp_org + accu_perturb, 0, 1)
+        # fused = torch.FloatTensor(fused).cuda().squeeze()
+        # return fused
+        return torch.FloatTensor(accu_perturb).cuda()
 
 
 # class HessianAttack(object):
-# 
+#
 #     def __init__(self, model,
 #                  lambda_t1=1, lambda_t2=1,
 #                  lambda_l1=1e4, lambda_l2=1e4,
@@ -102,18 +102,18 @@ class NewHessianAttack(object):
 #         self.n_iterations = n_iterations
 #         self.optim = optim.lower()
 #         self.lr = lr
-# 
+#
 #     def attack(self, inp, ind=None, return_loss=False):
 #         batch_size, n_chs, img_height, img_width = inp.shape
 #         img_size = img_height * img_width
 #         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
 #         delta = nn.Parameter(delta, requires_grad=True)
-# 
+#
 #         if self.optim == 'sgd':
 #             optimizer = torch.optim.SGD([delta], lr=self.lr)
 #         elif self.optim == 'adam':
 #             optimizer = torch.optim.Adam([delta], lr=self.lr)
-# 
+#
 #         for i in range(self.n_iterations):
 #             output = self.model(inp)
 #             ind = output.max(1)[1]
@@ -128,14 +128,14 @@ class NewHessianAttack(object):
 #             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
 #             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
 #             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-# 
+#
 #             loss = (
 #                 # + self.lambda_t1 * taylor_1
 #                 - self.lambda_t2 * taylor_2
 #                 # + self.lambda_l1 * l1_term
 #                 # + self.lambda_l2 * l2_term
 #             )
-# 
+#
 #             optimizer.zero_grad()
 #             loss.backward()
 #             optimizer.step()
@@ -167,9 +167,8 @@ def saliency_correlation(saliency_1, saliency_2):
     return spearmanr(saliency_1, saliency_2)
 
 
-def fuse(inp, delta, mask=None, sign=False, epsilon=1e-2, gamma=3e-1):
+def fuse(inp, delta, mask=None, gamma=3e-1):
     '''use saliency as a mask and fuse inp with delta'''
-    delta = (delta - delta.min()) / (delta.max() + 1e-20)
     inp = inp.cpu().squeeze(0).numpy()
     delta = delta.cpu().squeeze(0).numpy()
     mask = mask.cpu().squeeze(0).numpy()
@@ -179,17 +178,16 @@ def fuse(inp, delta, mask=None, sign=False, epsilon=1e-2, gamma=3e-1):
 
     inp = inp.reshape(n_chs, img_size)
     delta = delta.reshape(n_chs, img_size)
-    mask = mask.reshape(n_chs, img_size)
+    # mask = mask.reshape(n_chs, img_size)
+    mask = mask.reshape(img_size)
 
-    mask = np.abs(mask).max(axis=0)
+    # mask = np.abs(mask).max(axis=0)
     mask_idx = mask.argsort()[::-1]  # descend
     protected_idx = mask_idx[:int(gamma * mask_idx.size)]
-    print(protected_idx.size)
+    print('protected', protected_idx.size)
     delta[:, protected_idx] = 0
 
-    if sign:
-        delta = np.sign(delta)
-    fused = np.clip(inp + epsilon * delta, 0, 1)
+    fused = np.clip(inp + delta, 0, 1)
     fused = fused.reshape(n_chs, img_height, img_width)
     fused = torch.FloatTensor(fused)
 
@@ -203,16 +201,13 @@ def fuse(inp, delta, mask=None, sign=False, epsilon=1e-2, gamma=3e-1):
 def run_hessian():
     sparse_args = {
         'lambda_t1': 1,
-        'lambda_t2': -1,
+        'lambda_t2': 1,
         'lambda_l1': 1e4,
         'lambda_l2': 1e4,
         'n_iterations': 10,
         'optim': 'sgd',
         'lr': 1e-1,
     }
-
-    # fuse_epsilon = 2 / 255
-    # fuse_gamma = 0
 
     configs = [
         ['resnet50', 'sparse', 'camshow', sparse_args],
@@ -265,7 +260,10 @@ def run_hessian():
     rows = []
     for model_name, method_name, viz_style, kwargs in configs:
         inp_org = transf(raw_img)
-        explainer = get_explainer(model, method_name, kwargs)
+        if method_name == 'sparse':
+            explainer = get_explainer(model_softplus, method_name, kwargs)
+        else:
+            explainer = get_explainer(model, method_name, kwargs)
 
         filename_o = '{}.{}.{}.png'.format(output_path, method_name, 'org')
         # filename_m = '{}.{}.{}.png'.format(output_path, method_name, 'msk')
@@ -279,11 +277,11 @@ def run_hessian():
         row_num = [method_name, ' ']
         for atk, attack_name in attacks:
 
-            # inp_atk, protected = fuse(
-            #     inp_org, atk.clone(), saliency_org,
-            #     epsilon=fuse_epsilon, gamma=fuse_gamma)
+            inp_atk, protected = fuse(
+                inp_org, atk.clone(), saliency_org,
+                gamma=0.7)
 
-            inp_atk = atk.clone()
+            # inp_atk = atk.clone()
 
             filename_a = '{}.{}.{}.png'.format(output_path,
                                                method_name,
