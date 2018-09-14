@@ -11,7 +11,7 @@ import viz
 import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
-from param_matrix import get_saliency
+from param_matrix import get_saliency, get_saliency_no_viz
 from resnet import resnet50
 
 import matplotlib
@@ -147,13 +147,13 @@ def run_hessian():
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
     ]
-
-    input_path = 'examples/tricycle.png'
+    
+    input_path = 'examples/tricycle.png'    
     output_path = 'output/tricycle'
     model_name = 'resnet50'
     method_name = 'sparse'
-    viz_style = 'camshow'
-    raw_img = viz.pil_loader(input_path)    
+    viz_style = 'camshow'    
+    raw_img = viz.pil_loader(input_path) 
     transf = get_preprocess(model_name, method_name)
     model = utils.load_model(model_name)
     model_softplus = resnet50(pretrained=True)
@@ -176,7 +176,7 @@ def run_hessian():
         ), 'gho'),
         (NoiseAttack(epsilon=2 / 255), 'rnd'),
     ]
-
+   
     attacks = []
     for atk, attack_name in attackers:
         inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
@@ -248,5 +248,87 @@ def run_hessian():
         writer.write_table()
 
 
+
+def run_hessian():
+    sparse_args = {
+        'lambda_t1': 1,
+        'lambda_t2': 1,
+        'lambda_l1': 1e4,
+        'lambda_l2': 1e4,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 1e-1,
+    }
+
+    configs = [
+        ['resnet50', 'sparse', 'camshow', sparse_args],
+        ['resnet50', 'vanilla_grad', 'camshow', None],
+        #['resnet50', 'grad_x_input', 'camshow', None],
+        ['resnet50', 'smooth_grad', 'camshow', None],
+        ['resnet50', 'integrate_grad', 'camshow', None],
+        # ['resnet50', 'deconv', 'imshow', None],
+        # ['resnet50', 'guided_backprop', 'imshow', None],
+        # ['resnet50', 'gradcam', 'camshow', None],
+        # ['resnet50', 'excitation_backprop', 'camshow', None],
+        # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
+    ]
+    
+    model_name = 'resnet50'
+    method_name = 'sparse'
+    transf = get_preprocess(model_name, method_name)
+    model = utils.load_model(model_name)
+    model_softplus = resnet50(pretrained=True)
+    model.eval()
+    model_softplus.eval()
+    model.cuda()
+    model_softplus.cuda()
+
+    attackers = [
+        # (NewHessianAttack(
+        #     model_softplus,
+        #     lambda_t1=0,
+        #     lambda_t2=1,
+        #     lambda_l1=0,
+        #     lambda_l2=0,
+        #     n_iterations=30,
+        #     optim='sgd',
+        #     lr=1e-2,
+        #     epsilon=2 / 255
+        # ), 'gho'),
+        (NoiseAttack(epsilon=2 / 255), 'rnd'),
+    ]
+
+
+    
+    # image_path = '/fs/imageNet/imagenet/ILSVRC_val/'    
+    # corr = [0] * len(configs)
+    # for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
+    filename = 'examples/tricycle.png'    
+    raw_img = viz.pil_loader(filename)        
+
+    attacks = []
+    for atk, attack_name in attackers:
+        inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
+        delta = atk.attack(inp)
+        attacks.append((delta, attack_name))
+    
+    for idx, model_name, method_name, viz_style, kwargs in enumerate(configs):
+        inp_org = transf(raw_img)
+        if method_name == 'sparse':
+            explainer = get_explainer(model_softplus, method_name, kwargs)
+        else:
+            explainer = get_explainer(model, method_name, kwargs)
+        
+        saliency_org = get_saliency_no_viz(model, explainer, inp_org)
+
+        for atk, attack_name in attacks:
+            inp_atk, protected = fuse(
+                inp_org, atk.clone(), saliency_org,
+                gamma=0)            
+            saliency_atk = get_saliency(model, explainer, inp_atk.clone())                                        
+            corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+    print(corr)
+
 if __name__ == '__main__':
-    run_hessian()
+    #run_hessian()
+    run_hessian_full_validation()

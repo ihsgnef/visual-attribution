@@ -60,16 +60,12 @@ def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True)    
     return X
 
-#def getProtectedRegion(saliency, cutoff = 0.05):                
-#    return np.abs(saliency) < cutoff*np.abs(saliency).max() # note for paper we do absolute value when computing it    
-
 def attackUnImportant(saliency, cutoff = 0.10):               
-    saliency = np.abs(saliency)  # shouldn't be necessary because we do abs when visualizing.      
+    saliency = np.abs(saliency)
     protected_percentile = np.percentile(saliency, cutoff)
     if cutoff == 0:
         protected_percentile = -1
-    return saliency <= protected_percentile # note for paper we do absolute value when computing it. Is that a good decision?  It shouldn't matter u fool
-    # do = so when protected percentile is 100 everything is included. but when protected is 0 we want nothing included  
+    return saliency <= protected_percentile
 
 def attackImportant(saliency, cutoff = 0.10):               
     saliency = np.abs(saliency)
@@ -81,11 +77,9 @@ def attackImportant(saliency, cutoff = 0.10):
 def VisualizeImageGrayscale(image_3d, percentile=99):
     image_3d = np.abs(image_3d.squeeze())
     image_2d = torch.sum(image_3d, dim=0)
-
-    image_2d = image_2d.numpy()
+    image_2d = image_2d.numpy()    
     vmax = np.percentile(image_2d, percentile)
     vmin = np.min(image_2d)
-
     return torch.from_numpy(np.clip((image_2d - vmin) / (vmax - vmin), 0, 1))
 
 def main():
