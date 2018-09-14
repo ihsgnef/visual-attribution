@@ -17,7 +17,7 @@ from resnet import resnet50
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-
+import glob
 
 class NoiseAttack(object):
 
@@ -36,7 +36,7 @@ class NewHessianAttack(object):
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=1e-2,
-                 epsilon=2 / 255):
+                 epsilon=16 / 255):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -249,7 +249,7 @@ def run_hessian():
 
 
 
-def run_hessian():
+def run_hessian_full_validation():
     sparse_args = {
         'lambda_t1': 1,
         'lambda_t2': 1,
@@ -295,39 +295,44 @@ def run_hessian():
         #     lr=1e-2,
         #     epsilon=2 / 255
         # ), 'gho'),
-        (NoiseAttack(epsilon=2 / 255), 'rnd'),
+        (NoiseAttack(epsilon=16 / 255), 'rnd'),
     ]
 
 
     
-    # image_path = '/fs/imageNet/imagenet/ILSVRC_val/'    
-    # corr = [0] * len(configs)
-    # for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
-    filename = 'examples/tricycle.png'    
-    raw_img = viz.pil_loader(filename)        
+    image_path = '/fs/imageNet/imagenet/ILSVRC_val/'    
+    corr = [0] * len(configs)
+    total_count = 0.0
+    for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
+        total_count += 1
+        if total_count > 50:
+            continue
+        raw_img = viz.pil_loader(filename)        
 
-    attacks = []
-    for atk, attack_name in attackers:
-        inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
-        delta = atk.attack(inp)
-        attacks.append((delta, attack_name))
-    
-    for idx, model_name, method_name, viz_style, kwargs in enumerate(configs):
-        inp_org = transf(raw_img)
-        if method_name == 'sparse':
-            explainer = get_explainer(model_softplus, method_name, kwargs)
-        else:
-            explainer = get_explainer(model, method_name, kwargs)
+        attacks = []
+        for atk, attack_name in attackers:
+            inp = utils.cuda_var(transf(raw_img).unsqueeze(0), requires_grad=True)
+            delta = atk.attack(inp)
+            attacks.append((delta, attack_name))
+     
+        for idx, (model_name, method_name, viz_style, kwargs) in enumerate(configs):
+            inp_org = transf(raw_img)
+            if method_name == 'sparse':
+                explainer = get_explainer(model_softplus, method_name, kwargs)
+            else:
+                explainer = get_explainer(model, method_name, kwargs)
         
-        saliency_org = get_saliency_no_viz(model, explainer, inp_org)
+            saliency_org = get_saliency_no_viz(model, explainer, inp_org)
 
-        for atk, attack_name in attacks:
-            inp_atk, protected = fuse(
-                inp_org, atk.clone(), saliency_org,
-                gamma=0)            
-            saliency_atk = get_saliency(model, explainer, inp_atk.clone())                                        
-            corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
-    print(corr)
+            for atk, attack_name in attacks:
+                inp_atk, protected = fuse(
+                    inp_org, atk.clone(), saliency_org,
+                    gamma=0)            
+                saliency_atk = get_saliency_no_viz(model, explainer, inp_atk.clone())                                        
+                corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+    for idx, c in enumerate(configs):
+        print(c)
+        print(corr[idx] / 50)
 
 if __name__ == '__main__':
     #run_hessian()
