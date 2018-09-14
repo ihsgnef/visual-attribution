@@ -91,18 +91,10 @@ def get_prediction(model, inp):
 
 
 def saliency_correlation(saliency_1, saliency_2):
-    saliency_1 = saliency_1.cpu().numpy()
-    saliency_2 = saliency_2.cpu().numpy()    
-    saliency_1 = np.abs(saliency_1).max(axis=1).squeeze()
-    saliency_2 = np.abs(saliency_2).max(axis=1).squeeze()
+    saliency_1 = saliency_1.cpu().numpy() # already normalized maps
+    saliency_2 = saliency_2.cpu().numpy()   
     saliency_1 = saliency_1.ravel()
     saliency_2 = saliency_2.ravel()
-
-    saliency_1 -= saliency_1.min()
-    saliency_1 /= (saliency_1.max() + 1e-20)
-    saliency_2 -= saliency_2.min()
-    saliency_2 /= (saliency_2.max() + 1e-20)
-
     return spearmanr(saliency_1, saliency_2)
 
 
@@ -218,7 +210,7 @@ def run_hessian():
 
             inp_atk, protected = fuse(
                 inp_org, atk.clone(), saliency_org,
-                gamma=0.7)
+                gamma=0)#0.2)
 
             # inp_atk = atk.clone()
 
