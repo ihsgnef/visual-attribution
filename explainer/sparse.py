@@ -6,7 +6,7 @@ from collections import defaultdict
 
 class SparseExplainer(object):
     def __init__(self, model,
-                 lambda_t1=1, lambda_t2=1,
+                 lambda_t1=1, lambda_t2=0,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=1e-2):
         self.model = model

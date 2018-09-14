@@ -104,8 +104,8 @@ def main():
 
     target = None          
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
-#    cutoffs = [0, 10,20,30,40,50,60,70,80,90,100]
-    cutoffs = [10]
+    cutoffs = [0, 10,20,30,40,50,60,70,80,90,100]
+    #cutoffs = [10]
     for current_cutoff in cutoffs:
         num_total = 0
         explainers_correct = [0] * len(explainers)
@@ -120,11 +120,11 @@ def main():
                 if explainer == "random":                    
                     saliency = torch.from_numpy(np.random.rand(3,224,224)).unsqueeze(0).cuda()                      
                     saliency = VisualizeImageGrayscale(saliency)
-                    protected_region = attackImportant(saliency.cpu().numpy(), cutoff=current_cutoff)
+                    protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=current_cutoff)
                 else:
                     saliency = explainer.explain(copy.deepcopy(inp), target)
                     saliency = VisualizeImageGrayscale(saliency)        
-                    protected_region = attackImportant(saliency.cpu().numpy(), cutoff=current_cutoff)
+                    protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=current_cutoff)
 
                 adversarial_image = perturb(model, copy.deepcopy(inp), protected = protected_region)                
                 
