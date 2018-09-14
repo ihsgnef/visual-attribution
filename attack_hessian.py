@@ -28,10 +28,10 @@ class NoiseAttack(object):
         inp = inp.data.cpu().numpy()
         noise = 2 * np.random.randint(2, size=inp.shape) - 1
         perturb = np.sign(noise) * self.epsilon
-        return torch.FloatTensor(perturb).cuda()
-        # fused = np.clip(inp + perturb, 0, 1)
-        # fused = torch.FloatTensor(fused).cuda().squeeze()
-        # return fused
+        # return torch.FloatTensor(perturb).cuda()
+        fused = np.clip(inp + perturb, 0, 1)
+        fused = torch.FloatTensor(fused).cuda().squeeze()
+        return fused
 
 
 class NewHessianAttack(object):
@@ -82,10 +82,10 @@ class NewHessianAttack(object):
             prev_perturb = accu_perturb
             accu_perturb = accu_perturb + step_size * delta
 
-        # fused = np.clip(inp_org + accu_perturb, 0, 1)
-        # fused = torch.FloatTensor(fused).cuda().squeeze()
-        # return fused
-        return torch.FloatTensor(accu_perturb).cuda()
+        fused = np.clip(inp_org + accu_perturb, 0, 1)
+        fused = torch.FloatTensor(fused).cuda().squeeze()
+        return fused
+        # return torch.FloatTensor(accu_perturb).cuda()
 
 
 # class HessianAttack(object):
@@ -202,7 +202,7 @@ def run_hessian():
     sparse_args = {
         'lambda_t1': 1,
         'lambda_t2': 1,
-        'lambda_l1': 1e4,
+        'lambda_l1': 0,
         'lambda_l2': 1e4,
         'n_iterations': 10,
         'optim': 'sgd',
@@ -237,17 +237,17 @@ def run_hessian():
     model_softplus.cuda()
 
     attackers = [
-        (NewHessianAttack(
-            model_softplus,
-            lambda_t1=0,
-            lambda_t2=1,
-            lambda_l1=0,
-            lambda_l2=0,
-            n_iterations=30,
-            optim='sgd',
-            lr=1e-2,
-            epsilon=2 / 255
-        ), 'gho'),
+        # (NewHessianAttack(
+        #     model_softplus,
+        #     lambda_t1=0,
+        #     lambda_t2=1,
+        #     lambda_l1=0,
+        #     lambda_l2=0,
+        #     n_iterations=30,
+        #     optim='sgd',
+        #     lr=1e-2,
+        #     epsilon=2 / 255
+        # ), 'gho'),
         (NoiseAttack(epsilon=2 / 255), 'rnd'),
     ]
 
@@ -277,11 +277,11 @@ def run_hessian():
         row_num = [method_name, ' ']
         for atk, attack_name in attacks:
 
-            inp_atk, protected = fuse(
-                inp_org, atk.clone(), saliency_org,
-                gamma=0.7)
+            # inp_atk, protected = fuse(
+            #     inp_org, atk.clone(), saliency_org,
+            #     gamma=0.3)
 
-            # inp_atk = atk.clone()
+            inp_atk = atk.clone()
 
             filename_a = '{}.{}.{}.png'.format(output_path,
                                                method_name,
