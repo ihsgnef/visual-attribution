@@ -90,7 +90,8 @@ def main():
     sparse_explainer = get_explainer(model, 'sparse', None)#kwargs)
     smooth_grad_explainer = get_explainer(model, 'smooth_grad', None)
     integrate_grad_explainer = get_explainer(model, 'integrate_grad', None)
-    explainers = [smooth_grad_explainer, sparse_explainer, integrate_grad_explainer, vanilla_grad_explainer, 'random']#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
+    sparse_integrate_grad_explainer = get_explainer(model, 'sparse_integrate_grad', None)
+    explainers = [smooth_grad_explainer, integrate_grad_explainer, vanilla_grad_explainer, 'random']#smooth_grad_explainer, integrate_grad_explainer, sparse_explainer]#, 'random']#, sparse_explainer]
     transf = transforms.Compose([
         transforms.Scale((224, 224)),
         transforms.ToTensor(),        
@@ -99,14 +100,12 @@ def main():
     target = None          
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
     cutoffs = [0, 10,20,30,40,50,60,70,80,90,100]
-    #cutoffs = [10]
+    #cutoffs = [10, 20]
     for current_cutoff in cutoffs:
         num_total = 0
         explainers_correct = [0] * len(explainers)
         for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
             num_total = num_total + 1
-            if (num_total > 50):
-                continue
             raw_img = viz.pil_loader(filename)
             inp = transf(raw_img)            ######################################### TODO ERIC KNOWS THIS        
             inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
@@ -127,10 +126,14 @@ def main():
                 if (original_prediction.data.cpu().numpy()[0] == adversarial_prediction.data.cpu().numpy()[0]):
                     explainers_correct[idx] = explainers_correct[idx] + 1
     	
-        print("Adversary Can Modify: ", current_cutoff)
-        for idx, explainer_correct in enumerate(explainers_correct):
-            print(explainer_correct)
-            print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / 50.0)#float(num_total))          
+        with open("protected_results.txt", "a") as text_file:
+            print("Adversary Can Modify: ", current_cutoff)
+            text_file.write('\n' + str(current_cutoff) + '\n' +'\n')
+            for idx, explainer_correct in enumerate(explainers_correct):
+                print(explainer_correct)
+                print("Method: ", explainers[idx], "Protected Accuracy: ", float(explainer_correct) / num_total)#float(num_total))           
+                text_file.write(str(explainers[idx]) + '\n')
+                text_file.write(str(float(explainer_correct) / num_total) + '\n')#float(num_total))   
 
 if __name__ == '__main__':
     main()    

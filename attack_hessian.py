@@ -137,10 +137,10 @@ def run_hessian():
 
     configs = [
         ['resnet50', 'sparse', 'camshow', sparse_args],
-        ['resnet50', 'vanilla_grad', 'camshow', None],
+        #['resnet50', 'vanilla_grad', 'camshow', None],
         #['resnet50', 'grad_x_input', 'camshow', None],
-        ['resnet50', 'smooth_grad', 'camshow', None],
-        ['resnet50', 'integrate_grad', 'camshow', None],
+        #['resnet50', 'smooth_grad', 'camshow', None],
+        #['resnet50', 'integrate_grad', 'camshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
@@ -169,7 +169,7 @@ def run_hessian():
             lambda_t2=1,
             lambda_l1=0,
             lambda_l2=0,
-            n_iterations=30,
+            n_iterations=10,
             optim='sgd',
             lr=1e-2,
             epsilon=2 / 255
@@ -187,9 +187,9 @@ def run_hessian():
     for model_name, method_name, viz_style, kwargs in configs:
         inp_org = transf(raw_img)
         if method_name == 'sparse':
-            explainer = get_explainer(model_softplus, method_name, kwargs)
+           explainer = get_explainer(model_softplus, method_name, kwargs)
         else:
-            explainer = get_explainer(model, method_name, kwargs)
+           explainer = get_explainer(model, method_name, kwargs)
 
         filename_o = '{}.{}.{}.png'.format(output_path, method_name, 'org')
         # filename_m = '{}.{}.{}.png'.format(output_path, method_name, 'msk')
@@ -262,10 +262,10 @@ def run_hessian_full_validation():
 
     configs = [
         ['resnet50', 'sparse', 'camshow', sparse_args],
-        ['resnet50', 'vanilla_grad', 'camshow', None],
+        #['resnet50', 'vanilla_grad', 'camshow', None],
         #['resnet50', 'grad_x_input', 'camshow', None],
-        ['resnet50', 'smooth_grad', 'camshow', None],
-        ['resnet50', 'integrate_grad', 'camshow', None],
+        #['resnet50', 'smooth_grad', 'camshow', None],
+        #['resnet50', 'integrate_grad', 'camshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'guided_backprop', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
@@ -284,28 +284,30 @@ def run_hessian_full_validation():
     model_softplus.cuda()
 
     attackers = [
-        # (NewHessianAttack(
-        #     model_softplus,
-        #     lambda_t1=0,
-        #     lambda_t2=1,
-        #     lambda_l1=0,
-        #     lambda_l2=0,
-        #     n_iterations=30,
-        #     optim='sgd',
-        #     lr=1e-2,
-        #     epsilon=2 / 255
-        # ), 'gho'),
-        (NoiseAttack(epsilon=16 / 255), 'rnd'),
+        (NewHessianAttack(
+            model_softplus,
+            lambda_t1=0,
+            lambda_t2=1,
+            lambda_l1=0,
+            lambda_l2=0,
+            n_iterations=30,
+            optim='sgd',
+            lr=1e-2,
+            epsilon=2 / 255
+        ), 'gho'),
+        (NoiseAttack(epsilon=8/ 255), 'rnd'),
     ]
 
 
     
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/'    
-    corr = [0] * len(configs)
+    ghorbani_corr = [0] * len(configs)
+    noise_corr = [0] * len(configs)
     total_count = 0.0
+    num_images = 5
     for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
         total_count += 1
-        if total_count > 50:
+        if total_count > num_images:
             continue
         raw_img = viz.pil_loader(filename)        
 
@@ -328,11 +330,16 @@ def run_hessian_full_validation():
                 inp_atk, protected = fuse(
                     inp_org, atk.clone(), saliency_org,
                     gamma=0)            
-                saliency_atk = get_saliency_no_viz(model, explainer, inp_atk.clone())                                        
-                corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+                saliency_atk = get_saliency_no_viz(model, explainer, inp_atk.clone())                                       
+                if attack_name == "gho":
+                    ghorbani_corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+                elif attack_name == "rnd":
+                    noise_corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+
     for idx, c in enumerate(configs):
         print(c)
-        print(corr[idx] / 50)
+        print("Ghorbani Correlation: ", ghorbani_corr[idx] / num_images)
+        print("Noise Correlation: ", noise_corr[idx] / num_images)
 
 if __name__ == '__main__':
     #run_hessian()
