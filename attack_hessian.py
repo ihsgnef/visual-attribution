@@ -1,9 +1,9 @@
+import glob
 import numpy as np
 import pytablewriter
 from scipy.stats import spearmanr
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
@@ -11,7 +11,7 @@ import viz
 import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
-from param_matrix import get_saliency
+from param_matrix import get_saliency, get_saliency_no_viz
 from resnet import resnet50
 
 import matplotlib
@@ -40,7 +40,7 @@ class NewHessianAttack(object):
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=1e-2,
-                 epsilon=2 / 255):
+                 epsilon=16 / 255):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -56,7 +56,6 @@ class NewHessianAttack(object):
         ind_org = self.model(inp).max(1)[1].data.cpu().numpy()
 
         batch_size, n_chs, img_height, img_width = inp.shape
-        img_size = img_height * img_width
         step_size = self.epsilon / self.n_iterations
         accu_perturb = np.zeros_like(inp_org)
         prev_perturb = np.zeros_like(inp_org)
@@ -74,10 +73,11 @@ class NewHessianAttack(object):
 
             out_loss = F.cross_entropy(output, ind)
             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
-            inp_grad = inp_grad.view((batch_size, n_chs, img_size))
+            inp_grad = inp_grad.squeeze().view(n_chs, -1)
 
-            delta, = torch.autograd.grad(-inp_grad.sum(), inp)
-            delta = delta.view((batch_size, n_chs, img_height, img_width))
+            topk = inp_grad.abs().sort(dim=1, descending=True)[0]
+            topk = topk[:, :1000].sum()
+            delta, = torch.autograd.grad(-topk, inp)
             delta = delta.sign().data.cpu().numpy()
             prev_perturb = accu_perturb
             accu_perturb = accu_perturb + step_size * delta
@@ -88,61 +88,6 @@ class NewHessianAttack(object):
         # return torch.FloatTensor(accu_perturb).cuda()
 
 
-# class HessianAttack(object):
-#
-#     def __init__(self, model,
-#                  lambda_t1=1, lambda_t2=1,
-#                  lambda_l1=1e4, lambda_l2=1e4,
-#                  n_iterations=10, optim='sgd', lr=1e-2):
-#         self.model = model
-#         self.lambda_t1 = lambda_t1
-#         self.lambda_t2 = lambda_t2
-#         self.lambda_l1 = lambda_l1
-#         self.lambda_l2 = lambda_l2
-#         self.n_iterations = n_iterations
-#         self.optim = optim.lower()
-#         self.lr = lr
-#
-#     def attack(self, inp, ind=None, return_loss=False):
-#         batch_size, n_chs, img_height, img_width = inp.shape
-#         img_size = img_height * img_width
-#         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
-#         delta = nn.Parameter(delta, requires_grad=True)
-#
-#         if self.optim == 'sgd':
-#             optimizer = torch.optim.SGD([delta], lr=self.lr)
-#         elif self.optim == 'adam':
-#             optimizer = torch.optim.Adam([delta], lr=self.lr)
-#
-#         for i in range(self.n_iterations):
-#             output = self.model(inp)
-#             ind = output.max(1)[1]
-#             out_loss = F.cross_entropy(output, ind)
-#             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
-#             inp_grad = inp_grad.view((batch_size, n_chs, img_size))
-#             hessian_delta_vp, = torch.autograd.grad(
-#                     inp_grad.dot(delta).sum(), inp, create_graph=True)
-#             hessian_delta_vp = hessian_delta_vp.view(
-#                     (batch_size, n_chs, img_size))
-#             taylor_1 = inp_grad.dot(delta).sum()
-#             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
-#             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
-#             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-#
-#             loss = (
-#                 # + self.lambda_t1 * taylor_1
-#                 - self.lambda_t2 * taylor_2
-#                 # + self.lambda_l1 * l1_term
-#                 # + self.lambda_l2 * l2_term
-#             )
-#
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-#         delta = delta.view((batch_size, n_chs, img_height, img_width))
-#         return delta.data
-
-
 def get_prediction(model, inp):
     inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
     output = model(inp)
@@ -151,51 +96,42 @@ def get_prediction(model, inp):
 
 
 def saliency_correlation(saliency_1, saliency_2):
-    saliency_1 = saliency_1.cpu().numpy()
+    saliency_1 = saliency_1.cpu().numpy()  # already normalized maps
     saliency_2 = saliency_2.cpu().numpy()
-    saliency_1 = np.abs(saliency_1).max(axis=1).squeeze()
-    saliency_2 = np.abs(saliency_2).max(axis=1).squeeze()
     saliency_1 = saliency_1.ravel()
     saliency_2 = saliency_2.ravel()
-
-    saliency_1 -= saliency_1.min()
-    saliency_1 /= (saliency_1.max() + 1e-20)
-    saliency_2 -= saliency_2.min()
-    saliency_2 /= (saliency_2.max() + 1e-20)
-
-    # return entropy(saliency_1, saliency_2)
     return spearmanr(saliency_1, saliency_2)
 
 
-def fuse(inp, delta, mask=None, gamma=3e-1):
-    '''use saliency as a mask and fuse inp with delta'''
-    inp = inp.cpu().squeeze(0).numpy()
-    delta = delta.cpu().squeeze(0).numpy()
-    mask = mask.cpu().squeeze(0).numpy()
-
-    n_chs, img_height, img_width = inp.shape
-    img_size = img_height * img_width
-
-    inp = inp.reshape(n_chs, img_size)
-    delta = delta.reshape(n_chs, img_size)
-    # mask = mask.reshape(n_chs, img_size)
-    mask = mask.reshape(img_size)
-
-    # mask = np.abs(mask).max(axis=0)
-    mask_idx = mask.argsort()[::-1]  # descend
-    protected_idx = mask_idx[:int(gamma * mask_idx.size)]
-    print('protected', protected_idx.size)
-    delta[:, protected_idx] = 0
-
-    fused = np.clip(inp + delta, 0, 1)
-    fused = fused.reshape(n_chs, img_height, img_width)
-    fused = torch.FloatTensor(fused)
-
-    protected = np.ones_like(inp)
-    protected[:, protected_idx] = 0
-    protected = protected.reshape(n_chs, img_height, img_width)
-    protected = torch.FloatTensor(protected)
-    return fused, protected
+# def fuse(inp, delta, mask=None, gamma=3e-1):
+#     '''use saliency as a mask and fuse inp with delta'''
+#     inp = inp.cpu().squeeze(0).numpy()
+#     delta = delta.cpu().squeeze(0).numpy()
+#     mask = mask.cpu().squeeze(0).numpy()
+# 
+#     n_chs, img_height, img_width = inp.shape
+#     img_size = img_height * img_width
+# 
+#     inp = inp.reshape(n_chs, img_size)
+#     delta = delta.reshape(n_chs, img_size)
+#     # mask = mask.reshape(n_chs, img_size)
+#     mask = mask.reshape(img_size)
+# 
+#     # mask = np.abs(mask).max(axis=0)
+#     mask_idx = mask.argsort()[::-1]  # descend
+#     protected_idx = mask_idx[:int(gamma * mask_idx.size)]
+#     print('protected', protected_idx.size)
+#     delta[:, protected_idx] = 0
+# 
+#     fused = np.clip(inp + delta, 0, 1)
+#     fused = fused.reshape(n_chs, img_height, img_width)
+#     fused = torch.FloatTensor(fused)
+# 
+#     protected = np.ones_like(inp)
+#     protected[:, protected_idx] = 0
+#     protected = protected.reshape(n_chs, img_height, img_width)
+#     protected = torch.FloatTensor(protected)
+#     return fused, protected
 
 
 def run_hessian():
@@ -230,24 +166,25 @@ def run_hessian():
     raw_img = viz.pil_loader(input_path)
     transf = get_preprocess(model_name, method_name)
     model = utils.load_model(model_name)
-    model_softplus = resnet50(pretrained=True)
     model.eval()
-    model_softplus.eval()
     model.cuda()
-    model_softplus.cuda()
+
+    # model_softplus = resnet50(pretrained=True)
+    # model_softplus.eval()
+    # model_softplus.cuda()
 
     attackers = [
-        # (NewHessianAttack(
-        #     model_softplus,
-        #     lambda_t1=0,
-        #     lambda_t2=1,
-        #     lambda_l1=0,
-        #     lambda_l2=0,
-        #     n_iterations=30,
-        #     optim='sgd',
-        #     lr=1e-2,
-        #     epsilon=2 / 255
-        # ), 'gho'),
+        (NewHessianAttack(
+            model,
+            lambda_t1=0,
+            lambda_t2=1,
+            lambda_l1=0,
+            lambda_l2=0,
+            n_iterations=30,
+            optim='sgd',
+            lr=1e-2,
+            epsilon=2 / 255
+        ), 'gho'),
         (NoiseAttack(epsilon=2 / 255), 'rnd'),
     ]
 
@@ -260,10 +197,7 @@ def run_hessian():
     rows = []
     for model_name, method_name, viz_style, kwargs in configs:
         inp_org = transf(raw_img)
-        if method_name == 'sparse':
-            explainer = get_explainer(model_softplus, method_name, kwargs)
-        else:
-            explainer = get_explainer(model, method_name, kwargs)
+        explainer = get_explainer(model, method_name, kwargs)
 
         filename_o = '{}.{}.{}.png'.format(output_path, method_name, 'org')
         # filename_m = '{}.{}.{}.png'.format(output_path, method_name, 'msk')
@@ -276,11 +210,9 @@ def run_hessian():
         # row_viz.append('![]({})'.format(filename_m))
         row_num = [method_name, ' ']
         for atk, attack_name in attacks:
-
             # inp_atk, protected = fuse(
             #     inp_org, atk.clone(), saliency_org,
             #     gamma=0.3)
-
             inp_atk = atk.clone()
 
             filename_a = '{}.{}.{}.png'.format(output_path,
@@ -322,5 +254,98 @@ def run_hessian():
         writer.write_table()
 
 
+def run_hessian_full_validation():
+    sparse_args = {
+        'lambda_t1': 1,
+        'lambda_t2': 1,
+        'lambda_l1': 1e4,
+        'lambda_l2': 1e4,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 1e-1,
+    }
+
+    configs = [
+        ['resnet50', 'sparse', 'camshow', sparse_args],
+        # ['resnet50', 'vanilla_grad', 'camshow', None],
+        # ['resnet50', 'grad_x_input', 'camshow', None],
+        # ['resnet50', 'smooth_grad', 'camshow', None],
+        # ['resnet50', 'integrate_grad', 'camshow', None],
+        # ['resnet50', 'deconv', 'imshow', None],
+        # ['resnet50', 'guided_backprop', 'imshow', None],
+        # ['resnet50', 'gradcam', 'camshow', None],
+        # ['resnet50', 'excitation_backprop', 'camshow', None],
+        # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
+    ]
+
+    model_name = 'resnet50'
+    method_name = 'sparse'
+    transf = get_preprocess(model_name, method_name)
+    model = utils.load_model(model_name)
+    model.eval()
+    model.cuda()
+
+    # model_softplus = resnet50(pretrained=True)
+    # model_softplus.eval()
+    # model_softplus.cuda()
+
+    attackers = [
+        (NewHessianAttack(
+            model,
+            lambda_t1=0,
+            lambda_t2=1,
+            lambda_l1=0,
+            lambda_l2=0,
+            n_iterations=30,
+            optim='sgd',
+            lr=1e-2,
+            epsilon=2 / 255
+        ), 'gho'),
+        (NoiseAttack(epsilon=8 / 255), 'rnd'),
+    ]
+
+    image_path = '/fs/imageNet/imagenet/ILSVRC_val/'
+    ghorbani_corr = [0] * len(configs)
+    noise_corr = [0] * len(configs)
+    total_count = 0.0
+    num_images = 5
+    for filename in glob.iglob(image_path + '**/*.JPEG', recursive=True):
+        total_count += 1
+        if total_count > num_images:
+            continue
+        raw_img = viz.pil_loader(filename)
+
+        attacks = []
+        for atk, attack_name in attackers:
+            inp = utils.cuda_var(transf(raw_img).unsqueeze(0),
+                                 requires_grad=True)
+            delta = atk.attack(inp)
+            attacks.append((delta, attack_name))
+
+        for idx, (model_name, method_name, viz_style, kwargs) in enumerate(configs):
+            inp_org = transf(raw_img)
+            if method_name == 'sparse':
+                explainer = get_explainer(model_softplus, method_name, kwargs)
+            else:
+                explainer = get_explainer(model, method_name, kwargs)
+
+            saliency_org = get_saliency_no_viz(model, explainer, inp_org)
+
+            for atk, attack_name in attacks:
+                inp_atk, protected = fuse(
+                    inp_org, atk.clone(), saliency_org,
+                    gamma=0)
+                saliency_atk = get_saliency_no_viz(model, explainer, inp_atk.clone())
+                if attack_name == "gho":
+                    ghorbani_corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+                elif attack_name == "rnd":
+                    noise_corr[idx] += saliency_correlation(saliency_org, saliency_atk).correlation
+
+    for idx, c in enumerate(configs):
+        print(c)
+        print("Ghorbani Correlation: ", ghorbani_corr[idx] / num_images)
+        print("Noise Correlation: ", noise_corr[idx] / num_images)
+
 if __name__ == '__main__':
     run_hessian()
+    # run_hessian_full_validation()

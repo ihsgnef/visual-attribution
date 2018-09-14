@@ -8,7 +8,7 @@ class SparseExplainer(object):
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10, optim='sgd', lr=1e-2):
+                 n_iterations=10, optim='sgd', lr=0.1):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -75,4 +75,4 @@ class SparseExplainer(object):
         delta = delta.view((batch_size, n_chs, img_height, img_width))
         if return_loss:
             return delta.data.abs(), loss_history
-        return delta.data.abs()    # abs as recommended by sohiel
+        return (delta.data * inp.data).abs()   # abs as recommended by sohiel

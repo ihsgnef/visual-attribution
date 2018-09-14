@@ -16,12 +16,8 @@ from matplotlib import pyplot as plt
 
 def get_saliency(model, explainer, inp, raw_img,
                  model_name, method_name, viz_style, filename):
-    if method_name == 'googlenet':  # swap channel due to caffe weights
-        inp_copy = inp.clone()
-        inp[0] = inp_copy[2]
-        inp[2] = inp_copy[0]
-    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
+    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
     # target = torch.LongTensor([image_class]).cuda()
     target = None
     saliency = explainer.explain(inp, target)
@@ -42,6 +38,14 @@ def get_saliency(model, explainer, inp, raw_img,
     plt.axis('off')
     plt.savefig(filename)
 
+    saliency = VisualizeImageGrayscale(saliency)
+    return saliency
+
+
+def get_saliency_no_viz(model, explainer, inp):
+    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
+    target = None
+    saliency = explainer.explain(inp, target)
     saliency = VisualizeImageGrayscale(saliency)
     return saliency
 
