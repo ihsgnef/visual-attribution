@@ -29,9 +29,6 @@ class NoiseAttack(object):
         noise = 2 * np.random.randint(2, size=inp.shape) - 1
         perturb = np.sign(noise) * self.epsilon
         return torch.FloatTensor(perturb).cuda()
-        # fused = np.clip(inp + perturb, 0, 1)
-        # fused = torch.FloatTensor(fused).cuda().squeeze()
-        # return fused
 
 class NewHessianAttack(object):
 
@@ -89,14 +86,12 @@ def get_prediction(model, inp):
     ind = output.max(1)[1]
     return ind
 
-
 def saliency_correlation(saliency_1, saliency_2):
     saliency_1 = saliency_1.cpu().numpy() # already normalized maps
     saliency_2 = saliency_2.cpu().numpy()   
     saliency_1 = saliency_1.ravel()
     saliency_2 = saliency_2.ravel()
     return spearmanr(saliency_1, saliency_2)
-
 
 def fuse(inp, delta, mask=None, gamma=3e-1):
     '''use saliency as a mask and fuse inp with delta'''
@@ -143,7 +138,7 @@ def run_hessian():
     configs = [
         ['resnet50', 'sparse', 'camshow', sparse_args],
         ['resnet50', 'vanilla_grad', 'camshow', None],
-        ['resnet50', 'grad_x_input', 'camshow', None],
+        #['resnet50', 'grad_x_input', 'camshow', None],
         ['resnet50', 'smooth_grad', 'camshow', None],
         ['resnet50', 'integrate_grad', 'camshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
