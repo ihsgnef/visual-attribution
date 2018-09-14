@@ -33,7 +33,6 @@ class NoiseAttack(object):
         # fused = torch.FloatTensor(fused).cuda().squeeze()
         # return fused
 
-
 class NewHessianAttack(object):
 
     def __init__(self, model,
@@ -81,67 +80,8 @@ class NewHessianAttack(object):
             delta = delta.sign().data.cpu().numpy()
             prev_perturb = accu_perturb
             accu_perturb = accu_perturb + step_size * delta
-
-        # fused = np.clip(inp_org + accu_perturb, 0, 1)
-        # fused = torch.FloatTensor(fused).cuda().squeeze()
-        # return fused
+        
         return torch.FloatTensor(accu_perturb).cuda()
-
-
-# class HessianAttack(object):
-#
-#     def __init__(self, model,
-#                  lambda_t1=1, lambda_t2=1,
-#                  lambda_l1=1e4, lambda_l2=1e4,
-#                  n_iterations=10, optim='sgd', lr=1e-2):
-#         self.model = model
-#         self.lambda_t1 = lambda_t1
-#         self.lambda_t2 = lambda_t2
-#         self.lambda_l1 = lambda_l1
-#         self.lambda_l2 = lambda_l2
-#         self.n_iterations = n_iterations
-#         self.optim = optim.lower()
-#         self.lr = lr
-#
-#     def attack(self, inp, ind=None, return_loss=False):
-#         batch_size, n_chs, img_height, img_width = inp.shape
-#         img_size = img_height * img_width
-#         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
-#         delta = nn.Parameter(delta, requires_grad=True)
-#
-#         if self.optim == 'sgd':
-#             optimizer = torch.optim.SGD([delta], lr=self.lr)
-#         elif self.optim == 'adam':
-#             optimizer = torch.optim.Adam([delta], lr=self.lr)
-#
-#         for i in range(self.n_iterations):
-#             output = self.model(inp)
-#             ind = output.max(1)[1]
-#             out_loss = F.cross_entropy(output, ind)
-#             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
-#             inp_grad = inp_grad.view((batch_size, n_chs, img_size))
-#             hessian_delta_vp, = torch.autograd.grad(
-#                     inp_grad.dot(delta).sum(), inp, create_graph=True)
-#             hessian_delta_vp = hessian_delta_vp.view(
-#                     (batch_size, n_chs, img_size))
-#             taylor_1 = inp_grad.dot(delta).sum()
-#             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
-#             l1_term = F.l1_loss(delta, torch.zeros_like(delta))
-#             l2_term = F.mse_loss(delta, torch.zeros_like(delta))
-#
-#             loss = (
-#                 # + self.lambda_t1 * taylor_1
-#                 - self.lambda_t2 * taylor_2
-#                 # + self.lambda_l1 * l1_term
-#                 # + self.lambda_l2 * l2_term
-#             )
-#
-#             optimizer.zero_grad()
-#             loss.backward()
-#             optimizer.step()
-#         delta = delta.view((batch_size, n_chs, img_height, img_width))
-#         return delta.data
-
 
 def get_prediction(model, inp):
     inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
@@ -152,7 +92,7 @@ def get_prediction(model, inp):
 
 def saliency_correlation(saliency_1, saliency_2):
     saliency_1 = saliency_1.cpu().numpy()
-    saliency_2 = saliency_2.cpu().numpy()
+    saliency_2 = saliency_2.cpu().numpy()    
     saliency_1 = np.abs(saliency_1).max(axis=1).squeeze()
     saliency_2 = np.abs(saliency_2).max(axis=1).squeeze()
     saliency_1 = saliency_1.ravel()
@@ -163,7 +103,6 @@ def saliency_correlation(saliency_1, saliency_2):
     saliency_2 -= saliency_2.min()
     saliency_2 /= (saliency_2.max() + 1e-20)
 
-    # return entropy(saliency_1, saliency_2)
     return spearmanr(saliency_1, saliency_2)
 
 
@@ -227,7 +166,7 @@ def run_hessian():
     model_name = 'resnet50'
     method_name = 'sparse'
     viz_style = 'camshow'
-    raw_img = viz.pil_loader(input_path)
+    raw_img = viz.pil_loader(input_path)    
     transf = get_preprocess(model_name, method_name)
     model = utils.load_model(model_name)
     model_softplus = resnet50(pretrained=True)
