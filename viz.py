@@ -40,7 +40,6 @@ def ShowGrayscaleImage(im, title='', ax=None):
     if ax is None:
         P.figure()
         P.axis('off')
-
     P.imshow(im, cmap=P.cm.gray, vmin=0, vmax=1)
     P.title(title)
 
