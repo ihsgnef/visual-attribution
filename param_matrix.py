@@ -18,9 +18,7 @@ def get_saliency(model, explainer, inp, raw_img,
                  model_name, method_name, viz_style, filename):
 
     inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-    # target = torch.LongTensor([image_class]).cuda()
-    target = None
-    saliency = explainer.explain(inp, target)
+    saliency = explainer.explain(inp, None)
     smap = utils.upsample(saliency, (raw_img.height, raw_img.width))
     smap = smap.cpu().numpy()
 
@@ -40,15 +38,6 @@ def get_saliency(model, explainer, inp, raw_img,
 
     saliency = VisualizeImageGrayscale(saliency)
     return saliency
-
-
-def get_saliency_no_viz(model, explainer, inp):
-    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
-    target = None
-    saliency = explainer.explain(inp, target)
-    saliency = VisualizeImageGrayscale(saliency)
-    return saliency
-
 
 def lambda_l1_n_iter(input_path, output_path):
     model_name = 'resnet50'
