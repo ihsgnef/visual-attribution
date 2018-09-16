@@ -1,5 +1,6 @@
 import glob
 import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from scipy.stats import spearmanr
 
@@ -162,7 +163,20 @@ def run_hessian(raw_images):
         inputs = torch.stack([transf(x) for x in raw_images])
         inputs = Variable(inputs.cuda(), requires_grad=True)
         perturbed, delta = atk.attack(inputs)
-        attacks.append((perturbed, attack_name))
+        attacks.append((perturbed, delta, attack_name))
+
+    def aggregate(saliency, image):
+        saliency = saliency.cpu()
+        image = image.cpu()
+        return viz.VisualizeImageGrayscale(saliency)
+        # return saliency.max(dim=1)[0]
+        # return saliency.abs().max(dim=1)[0]
+        # return saliency.sum(dim=1)
+        # return saliency.abs().sum(dim=1)
+        # return (saliency * image).sum(dim=1)
+        # return (saliency * image).abs().sum(dim=1)
+        # return (saliency * image).abs().max(dim=1)[0]
+        # return (saliency * image).max(dim=1)[0]
 
     '''run saliency methods'''
     scores = dict()
@@ -171,18 +185,22 @@ def run_hessian(raw_images):
         inputs = torch.stack([transf(x) for x in raw_images])
         inputs = Variable(inputs.cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs, None)
-        saliency_1 = viz.VisualizeImageGrayscale(saliency_1)
+        saliency_1 = aggregate(saliency_1, inputs.data)
 
         scores[method_name] = dict()
-
-        for perturbed, attack_name in attacks:
+        for perturbed, delta, attack_name in attacks:
             inputs = Variable(perturbed.clone().cuda(), requires_grad=True)
             saliency_2 = explainer.explain(inputs, None)
-            saliency_2 = viz.VisualizeImageGrayscale(saliency_2)
+            saliency_2 = aggregate(saliency_2, inputs.data)
 
             corr = saliency_correlation(saliency_1, saliency_2)
             over = saliency_overlap(saliency_1, saliency_2)
-            values = list(zip(corr, over))
+
+            delta = aggregate(delta, inputs.data)
+            over_1 = saliency_overlap(saliency_1, delta)
+            over_2 = saliency_overlap(saliency_2, delta)
+
+            values = list(zip(corr, over, over_1, over_2))
             scores[method_name][attack_name] = values
     return scores
 
@@ -194,7 +212,7 @@ if __name__ == '__main__':
     indices = list(range(0, len(image_files), batch_size))
     all_scores = None
     for batch_idx, start in enumerate(indices):
-        if batch_idx > 1:
+        if batch_idx > 3:
             break
         batch = image_files[start: start + batch_size]
         raw_images = [viz.pil_loader(x) for x in batch]
@@ -206,7 +224,14 @@ if __name__ == '__main__':
             for attack_name, values in scores[method_name].items():
                 all_scores[method_name][attack_name] += values
 
+    results = {'method': [], 'attack': [], 'correlation': [], 'overlap': []}
     for method_name in all_scores:
         for attack_name, values in all_scores[method_name].items():
             values = list(map(list, zip(*values)))
-            print(method_name, attack_name, [np.mean(x) for x in values])
+            values = [np.mean(x) for x in values]
+            results['method'].append(method_name)
+            results['attack'].append(attack_name)
+            results['correlation'].append(values[0])
+            results['overlap'].append(values[1])
+    results = pd.DataFrame(results)
+    print(results)
