@@ -117,45 +117,45 @@ def saliency_overlap(s1, s2):
     return scores
 
 
+transf = get_preprocess('resnet50', 'sparse')
+model = utils.load_model('resnet50')
+model.eval()
+model.cuda()
+
+sparse_args = {
+    'lambda_t1': 1,
+    'lambda_t2': 10,
+    'lambda_l1': 1e4,
+    'lambda_l2': 1e4,
+    'n_iterations': 10,
+    'optim': 'sgd',
+    'lr': 0.1,
+}
+
+configs = [
+    ['sparse', sparse_args],
+    ['vanilla_grad', None],
+    ['grad_x_input', None],
+    ['smooth_grad', None],
+    ['integrate_grad', None],
+]
+
+attackers = [
+    (GhorbaniAttack(
+        model,
+        lambda_t1=0,
+        lambda_t2=1,
+        lambda_l1=0,
+        lambda_l2=0,
+        n_iterations=30,
+        optim='sgd',
+        lr=1e-2,
+        epsilon=2 / 255
+     ), 'gho'),
+     (NoiseAttack(epsilon=2 / 255), 'rnd'),
+]
+
 def run_hessian(raw_images):
-    transf = get_preprocess('resnet50', 'sparse')
-    model = utils.load_model('resnet50')
-    model.eval()
-    model.cuda()
-
-    sparse_args = {
-        'lambda_t1': 1,
-        'lambda_t2': 1,
-        'lambda_l1': 0,
-        'lambda_l2': 1e4,
-        'n_iterations': 10,
-        'optim': 'sgd',
-        'lr': 1e-1,
-    }
-
-    configs = [
-        ['sparse', sparse_args],
-        ['vanilla_grad', None],
-        ['grad_x_input', None],
-        ['smooth_grad', None],
-        ['integrate_grad', None],
-    ]
-
-    attackers = [
-        (GhorbaniAttack(
-            model,
-            lambda_t1=0,
-            lambda_t2=1,
-            lambda_l1=0,
-            lambda_l2=0,
-            n_iterations=30,
-            optim='sgd',
-            lr=1e-2,
-            epsilon=2 / 255
-        ), 'gho'),
-        (NoiseAttack(epsilon=2 / 255), 'rnd'),
-    ]
-
     '''construct attacks'''
     attacks = []
     for atk, attack_name in attackers:

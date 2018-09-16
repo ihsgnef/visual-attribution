@@ -6,7 +6,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-
+import matplotlib.pylab as P
 
 def pil_loader(path):
     with open(path, 'rb') as f:
