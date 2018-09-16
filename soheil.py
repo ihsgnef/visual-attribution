@@ -10,15 +10,17 @@ from matplotlib import pylab as P
 
 def main():
     model_methods = [
-        ['resnet50', 'vanilla_grad', 'imshow', None],
-        ['resnet50', 'grad_x_input', 'imshow', None],
+        #['resnet50', 'vanilla_grad', 'imshow', None],
+    #    ['resnet50', 'grad_x_input', 'imshow', None],
         ['resnet50', 'smooth_grad', 'imshow', None],
-        ['resenet50', 'integrate_grad', 'imshow',None],
+        ['resnet50', 'integrate_grad', 'imshow',None],
         ['resnet50', 'guided_backprop', 'imshow', None],
-        ['resnet50', 'sparse', 'imshow', None],        
-        ['resent50', 'sparse_integrate_grad', 'imshow',None],
-        ['resnet50', 'sparse_smooth_grad', 'imshow', None],
-        ['resnet50', 'sparse_guided_backprop', 'imshow', None],
+        ['resnet50', 'deeplift_rescale', 'imshow', None],
+   #     ['resnet18', 'sparse', 'imshow', None],        
+        ['resnet18', 'sparse_smooth_grad', 'imshow', None],
+        ['resnet18', 'sparse_integrate_grad', 'imshow',None],
+        ['resnet18', 'sparse_guided_backprop', 'imshow', None],
+        ['resnet18', 'deeplift_rescale_sparse', 'imshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
@@ -48,7 +50,7 @@ def main():
     plt.subplot(3, 5, 1)
     plt.imshow(raw_img)
     plt.axis('off')
-    plt.title('Tricycle')
+    plt.title('Fox')
     for i, saliency in enumerate(all_saliency_maps):
         model_name, method_name, show_style, extra_args = model_methods[i]
         plt.subplot(3, 5, i + 2 + i // 4)
