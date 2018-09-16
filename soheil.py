@@ -9,7 +9,6 @@ import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
-from resnet_softplus import *
 
 import os
 import matplotlib
@@ -66,9 +65,9 @@ def VisualizeImageGrayscale(image_3d, percentile=99):
 
 
 def lambda_l1_n_iterations():
-    image_path = 'images/tricycle.png'
-    baseline_path = 'images/tricycle_{}.png'
-    output_path = 'images/lambda_l1_n_iterations{}.png'
+    image_path = 'examples/tricycle.png'
+    baseline_path = 'examples/tricycle_{}.png'
+    output_path = 'output/lambda_l1_n_iterations{}.png'
     model_name = 'resnet50'
     method_name = 'sparse'
     show_style = 'imshow'
@@ -268,9 +267,9 @@ def lambda_l1_l2():
 
 def main():
     default_methods = [
-        ['resnet50', 'vanilla_grad', 'imshow', None],
+        #['resnet50', 'vanilla_grad', 'imshow', None],
         #['resnet50', 'sparse_guided_backprop', 'imshow', None],
-        #['resnet50', 'sparse', 'imshow', None],
+        ['resnet50', 'sparse', 'imshow', None],
         # ['resnet50', 'grad_x_input', 'imshow', None],
         # ['resnet50', 'saliency', 'imshow', None],
         # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
@@ -331,15 +330,14 @@ def main():
 
     model_methods = default_methods  # + sparse_methods
 
-    image_path = 'images/tricycle.png'
+    image_path = 'examples/tricycle.png'
     raw_img = viz.pil_loader(image_path)
 
     all_saliency_maps = []
     for model_name, method_name, _, kwargs in model_methods:
         print(method_name)
         transf = get_preprocess(model_name, method_name)
-        #model = utils.load_model(model_name)
-        model = softplus_resnet50(pretrained=True).eval()
+        model = utils.load_model(model_name)
         model.cuda()
         explainer = get_explainer(model, method_name, kwargs)
 
