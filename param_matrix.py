@@ -89,7 +89,7 @@ def lambda_l1_l2(input_path, output_path):
     model = utils.load_model(model_name)
     model.cuda()
 
-    lambda_l1s = [1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
+    lambda_l1s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
     lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6]
     all_configs = list(itertools.product(lambda_l1s, lambda_l2s))
     all_configs = [{'lambda_l1': ll1, 'lambda_l2': ll2}
@@ -161,7 +161,7 @@ def baselines(input_path, output_path):
 if __name__ == '__main__':
     # baselines(input_path='examples/tricycle.png',
     #           output_path='output/tricycle')
-    lambda_l1_n_iter(input_path='examples/fox.png',
-                     output_path='output/fox')
-    # lambda_l1_l2(input_path='examples/tricycle.png',
-    #              output_path='output/tricycle')
+    #lambda_l1_n_iter(input_path='examples/fox.png',
+    #                 output_path='output/fox')
+    lambda_l1_l2(input_path='examples/fox.png',
+                 output_path='output/fox')
