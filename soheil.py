@@ -10,16 +10,16 @@ from matplotlib import pylab as P
 
 def main():
     model_methods = [
-        #['resnet50', 'vanilla_grad', 'imshow', None],
+        ['resnet50', 'vanilla_grad', 'imshow', None],
         ['resnet50', 'grad_x_input', 'imshow', None],
-        #['resnet50', 'sparse_guided_backprop', 'imshow', None],
-        ['resnet18', 'sparse', 'imshow', None], ########## resnet50        
-        # ['resnet50', 'saliency', 'imshow', None],
-        # ['resnet50', 'sparse_integrate_grad', 'imshow', None],
-        # ['resnet50', 'deconv', 'imshow', None],
-        #['resnet50', 'guided_backprop', 'imshow', None],
         ['resnet50', 'smooth_grad', 'imshow', None],
+        ['resenet50', 'integrate_grad', 'imshow',None],
+        ['resnet50', 'guided_backprop', 'imshow', None],
+        ['resnet50', 'sparse', 'imshow', None],        
+        ['resent50', 'sparse_integrate_grad', 'imshow',None],
         ['resnet50', 'sparse_smooth_grad', 'imshow', None],
+        ['resnet50', 'sparse_guided_backprop', 'imshow', None],
+        # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
         # ['resnet50', 'contrastive_excitation_backprop', 'camshow', None],
