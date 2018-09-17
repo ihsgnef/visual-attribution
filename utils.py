@@ -9,11 +9,8 @@ def load_model(arch):
         arch: (string) valid torchvision model name,
             recommendations 'vgg16' | 'googlenet' | 'resnet50'
     '''
-    if arch == 'googlenet':
-        from googlenet import get_googlenet
-        model = get_googlenet(pretrain=True)
     if arch == 'softplus50':
-        from resnet import resnet        
+        from resnet import resnet50
         model = resnet50()
         model = torch.nn.DataParallel(model).cuda()
         checkpoint = torch.load('checkpoint.pth.tar')

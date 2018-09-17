@@ -7,17 +7,16 @@ import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import pylab as P
-from resnet import resnet50
 
 def main():
     model_methods = [
         #['resnet50', 'vanilla_grad', 'imshow', None],
     #    ['resnet50', 'grad_x_input', 'imshow', None],
-        ['resnet50', 'smooth_grad', 'imshow', None],
-        ['resnet50', 'integrate_grad', 'imshow',None],
-        ['resnet50', 'guided_backprop', 'imshow', None],
-        ['resnet50', 'deeplift_rescale', 'imshow', None],
-        ['resnet50', 'sparse', 'imshow', None],       
+        #['resnet50', 'smooth_grad', 'imshow', None],
+        #['resnet50', 'integrate_grad', 'imshow',None],
+        #['resnet50', 'guided_backprop', 'imshow', None],
+        #['resnet50', 'deeplift_rescale', 'imshow', None],
+        #['resnet50', 'sparse', 'imshow', None],       
         ['softplus50', 'smooth_grad', 'imshow', None],
         ['softplus50', 'integrate_grad', 'imshow',None],
         ['softplus50', 'guided_backprop', 'imshow', None],
