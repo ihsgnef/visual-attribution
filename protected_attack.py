@@ -12,7 +12,7 @@ import torchvision.transforms as transforms
 import torch.nn.functional as F
 import torchvision
 
-batch_size = 8
+batch_size = 64
 
 def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
     output = model(X)
@@ -46,7 +46,7 @@ def run_protected(inputs, cutoff):
     sparse_args = {
         'lambda_t1': 1,
         'lambda_t2': 1,
-        'lambda_l1': 1000,
+        'lambda_l1': 1e2,
         'lambda_l2': 1e4,
         'n_iterations': 10,
         'optim': 'sgd',
@@ -90,8 +90,8 @@ if __name__ == '__main__':
     model.cuda()
     model.eval()
 
-    cutoffs = [10,20,30,40,50,60,70,80,90] # percentage adversary can see    
-    num_images = 10
+    cutoffs = [0,10,20,30,40,50,60,70,80,90] # percentage adversary can see    
+    num_images = 64
     for cutoff in cutoffs:
         batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
         all_scores = None

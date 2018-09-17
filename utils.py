@@ -55,7 +55,9 @@ def load_data(batch_size, num_images, transf, dataset='imagenet'):
     if dataset == 'cifar10':
         testset = torchvision.datasets.CIFAR10(root='./cifar/data', train=False, download=True, transform=transforms.ToTensor())#transform=transform_test)
         testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
-        for inputs, targets in testloader:
+        for idx, (inputs, targets) in enumerate(testloader): 
+            if idx > 0:
+                continue   ################################## REMOVE ME and replace with something involving num_images
             batches.append(inputs)
         return batches
         
