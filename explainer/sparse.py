@@ -71,5 +71,5 @@ class SparseExplainer(object):
 
         delta = delta.view((batch_size, n_chs, img_height, img_width))
         if return_loss:
-            return delta.data.abs(), loss_history
+            return delta.data, loss_history
         return delta.data
