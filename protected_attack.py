@@ -15,7 +15,7 @@ import glob
 from resnet import resnet50
 
 
-batch_size = 16
+batch_size = 8
 
 # inv_normalize = transforms.Compose([         
 #     transforms.Normalize(mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
@@ -64,13 +64,14 @@ def run_protected(raw_images, cutoff):
         checkpoint = torch.load('checkpoint.pth.tar')
         model.load_state_dict(checkpoint['state_dict'])
     else:
-	model = utils.load_model('resnet50')
+        model = utils.load_model('resnet50')
+    model.cuda()
     model.eval()
 
     sparse_args = {
         'lambda_t1': 1,
         'lambda_t2': 1,
-        'lambda_l1': 1e4,
+        'lambda_l1': 1000,
         'lambda_l2': 1e4,
         'n_iterations': 10,
         'optim': 'sgd',
@@ -81,15 +82,9 @@ def run_protected(raw_images, cutoff):
         ['sparse', sparse_args],
         ['vanilla_grad', None],
         #['random', None], 
-        ['grad_x_input', None],
-        ['smooth_grad', None],
-        ['integrate_grad', None],
-      #   ['gradcam', None],
-      #   ['guided_backprop', None],   # TODO, there is some bug with guided_backprop and deconv
-      #  ['real_time_saliency', None],
-      #   ['deconv', None],
-         # ['excitation_backprop', None],
-         # ['contrastive_excitation_backprop', None],
+        #['grad_x_input', None],
+        #['smooth_grad', None],
+        #['integrate_grad', None],
     ]
         
     inputs = torch.stack([transf(x) for x in raw_images])

@@ -12,7 +12,7 @@ from viz import VisualizeImageGrayscale
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
-
+from resnet import resnet50
 
 def get_saliency(model, explainer, inp, raw_img,
                  model_name, method_name, viz_style, filename):
@@ -43,7 +43,7 @@ def get_saliency(model, explainer, inp, raw_img,
     return saliency
 
 def lambda_l1_n_iter(input_path, output_path):
-    model_name = 'resnet18' #######################################resnet50
+    model_name = 'resnet50'
     method_name = 'sparse'
     viz_style = 'imshow'
     raw_img = viz.pil_loader(input_path)
@@ -52,7 +52,7 @@ def lambda_l1_n_iter(input_path, output_path):
     model.cuda()
 
     lambda_l1s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9]
-    n_iterations = [10]#list(range(1, 15))
+    n_iterations = list(range(1, 15))
     all_configs = list(itertools.product(lambda_l1s, n_iterations))
     all_configs = [{'lambda_l1': ll1, 'n_iterations': n_iter}
                    for ll1, n_iter in all_configs]
@@ -81,13 +81,21 @@ def lambda_l1_n_iter(input_path, output_path):
 
 
 def lambda_l1_l2(input_path, output_path):
-    model_name = 'resnet50'
+    model_name = 'softplus50'#######################'resnet50'
     method_name = 'sparse'
     viz_style = 'imshow'
     raw_img = viz.pil_loader(input_path)
     transf = get_preprocess(model_name, method_name)
-    model = utils.load_model(model_name)
+    if model_name == 'resnet50':
+        model = utils.load_model(model_name)
+    if model_name == 'softplus50':
+        import torch
+        model = resnet50()
+        model = torch.nn.DataParallel(model).cuda()
+        checkpoint = torch.load('checkpoint.pth.tar')
+        model.load_state_dict(checkpoint['state_dict'])
     model.cuda()
+    model.eval()
 
     lambda_l1s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
     lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6]

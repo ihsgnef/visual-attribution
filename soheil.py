@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import pylab as P
+from resnet import resnet50
 
 def main():
     model_methods = [
@@ -16,11 +17,16 @@ def main():
         ['resnet50', 'integrate_grad', 'imshow',None],
         ['resnet50', 'guided_backprop', 'imshow', None],
         ['resnet50', 'deeplift_rescale', 'imshow', None],
-   #     ['resnet18', 'sparse', 'imshow', None],        
-        ['resnet18', 'sparse_smooth_grad', 'imshow', None],
-        ['resnet18', 'sparse_integrate_grad', 'imshow',None],
-        ['resnet18', 'sparse_guided_backprop', 'imshow', None],
-        ['resnet18', 'deeplift_rescale_sparse', 'imshow', None],
+        ['resnet50', 'sparse', 'imshow', None],       
+        ['softplus50', 'smooth_grad', 'imshow', None],
+        ['softplus50', 'integrate_grad', 'imshow',None],
+        ['softplus50', 'guided_backprop', 'imshow', None],
+        ['softplus50', 'deeplift_rescale', 'imshow', None],
+        ['softplus50', 'sparse', 'imshow', None], 
+   #     ['resnet18', 'sparse_smooth_grad', 'imshow', None],
+   #     ['resnet18', 'sparse_integrate_grad', 'imshow',None],
+   #     ['resnet18', 'sparse_guided_backprop', 'imshow', None],
+   #     ['resnet18', 'deeplift_rescale_sparse', 'imshow', None],
         # ['resnet50', 'deconv', 'imshow', None],
         # ['resnet50', 'gradcam', 'camshow', None],
         # ['resnet50', 'excitation_backprop', 'camshow', None],
@@ -36,8 +42,18 @@ def main():
     for model_name, method_name, _, kwargs in model_methods:
         print(method_name)
         transf = get_preprocess(model_name, method_name)
-        model = utils.load_model(model_name)        
+    
+        if model_name == 'resnet50':                      
+            model = utils.load_model(model_name)        
+        if model_name == 'softplus50':
+            import torch 
+            model = resnet50()
+            model = torch.nn.DataParallel(model).cuda()
+            checkpoint = torch.load('checkpoint.pth.tar')
+            model.load_state_dict(checkpoint['state_dict'])
         model.cuda()
+        model.eval()
+
         explainer = get_explainer(model, method_name, kwargs)
         inp = transf(raw_img)
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
