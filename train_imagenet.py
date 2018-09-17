@@ -23,20 +23,20 @@ from resnet import resnet50
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('data', metavar='DIR',
                     help='path to dataset')
-#parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet50',
-#                    choices=model_names,
-#                    help='model architecture: ' +
-#                        ' | '.join(model_names) +
-#                        ' (default: resnet18)')
+parser.add_argument('--arch', '-a', metavar='ARCH', default='resnet50')#,
+                    #choices=model_names,
+                    #help='model architecture: ' +
+                    #    ' | '.join(model_names) +
+                    #    ' (default: resnet18)')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N',
                     help='number of data loading workers (default: 4)')
-parser.add_argument('--epochs', default=10, type=int, metavar='N',
+parser.add_argument('--epochs', default=20, type=int, metavar='N',
                     help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                     help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=256, type=int,
                     metavar='N', help='mini-batch size (default: 256)')
-parser.add_argument('--lr', '--learning-rate', default=0.0001, type=float,
+parser.add_argument('--lr', '--learning-rate', default=0.00001, type=float,
                     metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                     help='momentum')
@@ -78,7 +78,6 @@ def main():
     #    print("=> creating model '{}'".format(args.arch))
     #    model = models.__dict__[args.arch]()
     model = resnet50(pretrained=True)
- 
     if not args.distributed:
         #if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
         #    model.features = torch.nn.DataParallel(model.features)
@@ -164,6 +163,7 @@ def main():
         # remember best prec@1 and save checkpoint
         is_best = prec1 > best_prec1
         best_prec1 = max(prec1, best_prec1)
+        args.arch = 'resnet50'
         save_checkpoint({
             'epoch': epoch + 1,
             'arch': args.arch,
@@ -184,6 +184,7 @@ def train(train_loader, model, criterion, optimizer, epoch):
     model.train()
 
     end = time.time()
+    
     for i, (input, target) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
