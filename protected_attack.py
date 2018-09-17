@@ -12,6 +12,8 @@ import torch.nn.functional as F
 import torchvision.transforms as transforms
 import os
 import glob
+from resnet import resnet50
+
 
 batch_size = 16
 
@@ -54,14 +56,21 @@ def attackUnImportant(saliency, cutoff = 0.10):
 
 def run_protected(raw_images, cutoff):
     transf = get_preprocess('resnet50', 'sparse')
-    model = utils.load_model('resnet50')
+    
+    softplus = True    
+    if softplus:
+        model = resnet50()
+        model = torch.nn.DataParallel(model).cuda()
+        checkpoint = torch.load('checkpoint.pth.tar')
+        model.load_state_dict(checkpoint['state_dict'])
+    else:
+	model = utils.load_model('resnet50')
     model.eval()
-    model.cuda()
 
     sparse_args = {
         'lambda_t1': 1,
         'lambda_t2': 1,
-        'lambda_l1': 0,
+        'lambda_l1': 1e4,
         'lambda_l2': 1e4,
         'n_iterations': 10,
         'optim': 'sgd',
@@ -69,7 +78,7 @@ def run_protected(raw_images, cutoff):
     }
 
     configs = [
-        #['sparse', sparse_args],
+        ['sparse', sparse_args],
         ['vanilla_grad', None],
         #['random', None], 
         ['grad_x_input', None],
