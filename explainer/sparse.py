@@ -9,9 +9,6 @@ class SparseExplainer(object):
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=0.1):
-                 # lambda_t1=1, lambda_t2=0,
-                 # lambda_l1=0, lambda_l2=0,
-                 # n_iterations=1, optim='sgd', lr=0.001):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
