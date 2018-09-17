@@ -15,13 +15,6 @@ import glob
 
 batch_size = 8
 
-# inv_normalize = transforms.Compose([         
-#     transforms.Normalize(mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
-#         std=[1/0.229, 1/0.224, 1/0.255]),
-#     transforms.Scale((299, 299)),
-#     # transforms.ToPILImage(),
-#     ])
-
 def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
     output = model(X)
     if y is None:
@@ -38,8 +31,6 @@ def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     return X
 
 def attackUnImportant(saliency, cutoff = 0.10):               
-    # if cutoff == 0:
-    #     protected_percentile = -1  
     batch_size, height, width = saliency.shape  
     saliency = np.abs(saliency)
     new_saliency = []
