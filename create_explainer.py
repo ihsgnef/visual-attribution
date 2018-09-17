@@ -7,6 +7,7 @@ from explainer import ebp
 from explainer import real_time as rt
 from explainer import sparse as sparse
 
+
 def get_explainer(model, name, extra_args):
     methods = {
         'vanilla_grad': bp.VanillaGradExplainer,
@@ -28,6 +29,7 @@ def get_explainer(model, name, extra_args):
         'sparse_guided_backprop': bp.SparseGuidedBackpropExplainer
     }
 
+    name = name.split(' ')[0]
 
     if name == 'smooth_grad':
         base_explainer = methods['vanilla_grad'](model)
@@ -47,7 +49,7 @@ def get_explainer(model, name, extra_args):
     elif name == 'gradcam':
         if model.__class__.__name__ == 'VGG':
             explainer = methods[name](
-                model, target_layer_name_keys=['features', '30'] # pool5
+                model, target_layer_name_keys=['features', '30']  # pool5
             )
         elif model.__class__.__name__ == 'ResNet':
             explainer = methods[name](
@@ -55,26 +57,26 @@ def get_explainer(model, name, extra_args):
             )
 
     elif name == 'excitation_backprop':
-        if model.__class__.__name__ == 'VGG': # vgg16
+        if model.__class__.__name__ == 'VGG':  # vgg16
             explainer = methods[name](
                 model,
                 output_layer_keys=['features', '23']  # pool4
             )
-        elif model.__class__.__name__ == 'ResNet': # resnet50
+        elif model.__class__.__name__ == 'ResNet':  # resnet50
             explainer = methods[name](
                 model,
                 output_layer_keys=['layer4', '1', 'conv1']  # res4a
             )
-        
+
     elif name == 'contrastive_excitation_backprop':
-        if model.__class__.__name__ == 'VGG': # vgg16
+        if model.__class__.__name__ == 'VGG':  # vgg16
             explainer = methods[name](
                 model,
-                intermediate_layer_keys=['features', '30'], # pool5
+                intermediate_layer_keys=['features', '30'],  # pool5
                 output_layer_keys=['features', '23'],  # pool4
                 final_linear_keys=['classifier', '6']  # fc8
             )
-        elif model.__class__.__name__ == 'ResNet': # resnet50
+        elif model.__class__.__name__ == 'ResNet':  # resnet50
             explainer = methods[name](
                 model,
                 intermediate_layer_keys=['avgpool'],

@@ -94,6 +94,7 @@ class GhorbaniAttack:
 def saliency_correlation(s1, s2):
     # s1 and s2 are batched
     assert s1.shape == s2.shape
+    assert s1.ndimension() == 3  # batch, height, width
     batch_size = s1.shape[0]
     s1 = s1.cpu().numpy().reshape(batch_size, -1)
     s2 = s2.cpu().numpy().reshape(batch_size, -1)
@@ -109,12 +110,11 @@ def saliency_overlap(s1, s2):
     s1 = s1.cpu().numpy().reshape(batch_size, -1)
     s2 = s2.cpu().numpy().reshape(batch_size, -1)
     scores = []
+    K = 1000
     for x1, x2 in zip(s1, s2):
-        x1 = np.argsort(x1)[::-1]
-        x2 = np.argsort(x2)[::-1]
-        x1 = set(x1[:1000])
-        x2 = set(x2[:1000])
-        scores.append(len(x1.intersection(x2)) / 1000)
+        x1 = set(np.argsort(-x1)[:K])
+        x2 = set(np.argsort(-x2)[:K])
+        scores.append(len(x1.intersection(x2)) / K)
     return scores
 
 
@@ -123,18 +123,27 @@ model = utils.load_model('resnet50')
 model.eval()
 model.cuda()
 
-sparse_args = {
-    'lambda_t1': 1,
-    'lambda_t2': 10,
-    'lambda_l1': 1e4,
-    'lambda_l2': 1e4,
-    'n_iterations': 10,
-    'optim': 'sgd',
-    'lr': 0.1,
-}
-
 configs = [
-    ['sparse', sparse_args],
+    ['sparse 1',
+     {
+        'lambda_t1': 1,
+        'lambda_t2': 1,
+        'lambda_l1': 0,
+        'lambda_l2': 0,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 0.1,
+     }],
+    ['sparse 2',
+     {
+        'lambda_t1': 1,
+        'lambda_t2': 0,
+        'lambda_l1': 0,
+        'lambda_l2': 0,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 0.1,
+     }],
     ['vanilla_grad', None],
     ['grad_x_input', None],
     ['smooth_grad', None],
@@ -156,83 +165,123 @@ attackers = [
 ]
 
 
+def aggregate(saliency, image):
+    '''combine saliency mapping with image'''
+    saliency = saliency.cpu()
+    image = image.cpu()
+    return viz.VisualizeImageGrayscale(saliency)
+    # return saliency.max(dim=1)[0]
+    # return saliency.abs().max(dim=1)[0]
+    # return saliency.sum(dim=1)
+    # return saliency.abs().sum(dim=1)
+    # return (saliency * image).sum(dim=1)
+    # return (saliency * image).abs().sum(dim=1)
+    # return (saliency * image).abs().max(dim=1)[0]
+    # return (saliency * image).max(dim=1)[0]
+
+
+def perturb(image, delta, mask=None, flip=False):
+    '''perturb image with delta within mask
+    create zero-one mask where locations with high mask value get one
+    if flip is True, flip the sign of zero-one mask
+    '''
+    assert len(image.shape)
+    assert mask.ndimension() == 3  # batch, height, width
+    assert image.shape == delta.shape
+    batch_size, n_chns, height, width = image.shape
+    if isinstance(image, Variable):
+        image = image.data
+    image = image.cpu().numpy()
+    delta = delta.cpu().numpy()
+    mask = mask.cpu().numpy()
+    mask = mask.reshape(batch_size, -1)
+    zero_mask = np.zeros_like(mask)
+    K = 1000
+    mask = np.argsort(-mask, axis=1)[:, :K]
+    for i in range(batch_size):
+        zero_mask[i][mask[i]] = 1
+    zero_mask = zero_mask.reshape(batch_size, height, width)
+    zero_mask = np.expand_dims(zero_mask, 1)
+    if flip:
+        zero_mask = 1 - zero_mask
+    perturbed = image + delta * zero_mask
+    return torch.from_numpy(perturbed).cuda()
+
+
 def run_hessian(raw_images):
     '''construct attacks'''
     attacks = []
     for atk, attack_name in attackers:
-        inputs = torch.stack([transf(x) for x in raw_images])
-        inputs = Variable(inputs.cuda(), requires_grad=True)
-        perturbed, delta = atk.attack(inputs)
+        images = torch.stack([transf(x) for x in raw_images])
+        images = Variable(images.cuda(), requires_grad=True)
+        perturbed, delta = atk.attack(images)
         attacks.append((perturbed, delta, attack_name))
 
-    def aggregate(saliency, image):
-        saliency = saliency.cpu()
-        image = image.cpu()
-        # return viz.VisualizeImageGrayscale(saliency)
-        return viz.VisualizeImageGrayscale(saliency.abs())
-        # return saliency.max(dim=1)[0]
-        # return saliency.abs().max(dim=1)[0]
-        # return saliency.sum(dim=1)
-        # return saliency.abs().sum(dim=1)
-        # return (saliency * image).sum(dim=1)
-        # return (saliency * image).abs().sum(dim=1)
-        # return (saliency * image).abs().max(dim=1)[0]
-        # return (saliency * image).max(dim=1)[0]
-
     '''run saliency methods'''
-    scores = dict()
+    results = []
     for method_name, kwargs in configs:
         explainer = get_explainer(model, method_name, kwargs)
-        inputs = torch.stack([transf(x) for x in raw_images])
-        inputs = Variable(inputs.cuda(), requires_grad=True)
-        saliency_1 = explainer.explain(inputs, None)
-        saliency_1 = aggregate(saliency_1, inputs.data)
+        images = torch.stack([transf(x) for x in raw_images])
+        inputs = Variable(images.clone().cuda(), requires_grad=True)
+        saliency_1 = aggregate(explainer.explain(inputs), inputs.data)
 
-        scores[method_name] = dict()
         for perturbed, delta, attack_name in attacks:
-            inputs = Variable(perturbed.clone().cuda(), requires_grad=True)
-            saliency_2 = explainer.explain(inputs, None)
-            saliency_2 = aggregate(saliency_2, inputs.data)
+            # inputs = perturbed.clone()
+            batch_size = images.shape[0]
 
-            corr = saliency_correlation(saliency_1, saliency_2)
-            over = saliency_overlap(saliency_1, saliency_2)
+            inputs = perturbed.clone()
+            inputs = Variable(inputs.cuda(), requires_grad=True)
+            saliency_2 = aggregate(explainer.explain(inputs), inputs.data)
 
-            delta = aggregate(delta, inputs.data)
-            over_1 = saliency_overlap(saliency_1, delta)
-            over_2 = saliency_overlap(saliency_2, delta)
+            inputs = perturb(images, delta, saliency_1)
+            inputs = Variable(inputs.cuda(), requires_grad=True)
+            saliency_3 = aggregate(explainer.explain(inputs), inputs.data)
 
-            values = list(zip(corr, over, over_1, over_2))
-            scores[method_name][attack_name] = values
-    return scores
+            inputs = perturb(images, delta, saliency_1, flip=True)
+            inputs = Variable(inputs.cuda(), requires_grad=True)
+            saliency_4 = aggregate(explainer.explain(inputs), inputs.data)
+
+            scores = [
+                saliency_correlation(saliency_1, saliency_2),
+                saliency_correlation(saliency_1, saliency_3),
+                saliency_correlation(saliency_1, saliency_4),
+                saliency_overlap(saliency_1, saliency_2),
+                saliency_overlap(saliency_1, saliency_3),
+                saliency_overlap(saliency_1, saliency_4),
+                saliency_overlap(saliency_1, aggregate(delta, inputs.data)),
+                saliency_overlap(saliency_2, aggregate(delta, inputs.data)),
+                saliency_overlap(saliency_3, aggregate(delta, inputs.data)),
+                saliency_overlap(saliency_4, aggregate(delta, inputs.data)),
+            ]
+            scores = list(map(list, zip(*scores)))
+
+            for i in range(batch_size):
+                results.append([
+                    method_name,
+                    attack_name,
+                ] + scores[i])
+    return results
 
 
 if __name__ == '__main__':
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
-    image_files = list(glob.iglob(image_path, recursive=True))[:64]
+    image_files = list(glob.iglob(image_path, recursive=True))
     batch_size = 16
     indices = list(range(0, len(image_files), batch_size))
-    all_scores = None
+    results = []
     for batch_idx, start in enumerate(indices):
-        if batch_idx > 3:
+        if batch_idx > 1:
             break
         batch = image_files[start: start + batch_size]
         raw_images = [viz.pil_loader(x) for x in batch]
-        scores = run_hessian(raw_images)
-        if all_scores is None:
-            all_scores = scores
-            continue
-        for method_name in scores:
-            for attack_name, values in scores[method_name].items():
-                all_scores[method_name][attack_name] += values
-
-    results = {'method': [], 'attack': [], 'correlation': [], 'overlap': []}
-    for method_name in all_scores:
-        for attack_name, values in all_scores[method_name].items():
-            values = list(map(list, zip(*values)))
-            values = [np.mean(x) for x in values]
-            results['method'].append(method_name)
-            results['attack'].append(attack_name)
-            results['correlation'].append(values[0])
-            results['overlap'].append(values[1])
-    results = pd.DataFrame(results)
+        results += run_hessian(raw_images)
+    n_scores = len(results[0]) - 2  # number of different scores
+    print(n_scores)
+    # results = list(map(list, zip(*results)))
+    columns = (
+        ['method', 'attack'] +
+        ['score_{}'.format(i) for i in range(n_scores)]
+    )
+    results = pd.DataFrame(results, columns=columns)
+    results = results.groupby(['method', 'attack']).mean()
     print(results)
