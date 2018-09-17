@@ -12,8 +12,15 @@ def load_model(arch):
     if arch == 'googlenet':
         from googlenet import get_googlenet
         model = get_googlenet(pretrain=True)
+    if arch == 'softplus50':
+        from resnet import resnet        
+        model = resnet50()
+        model = torch.nn.DataParallel(model).cuda()
+        checkpoint = torch.load('checkpoint.pth.tar')
+        model.load_state_dict(checkpoint['state_dict'])        
     else:
         model = models.__dict__[arch](pretrained=True)
+    model.cuda()        
     model.eval()
     return model
 
