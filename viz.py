@@ -6,7 +6,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-
+import matplotlib.pylab as P
 
 def pil_loader(path):
     with open(path, 'rb') as f:
@@ -40,7 +40,6 @@ def ShowGrayscaleImage(im, title='', ax=None):
     if ax is None:
         P.figure()
         P.axis('off')
-
     P.imshow(im, cmap=P.cm.gray, vmin=0, vmax=1)
     P.title(title)
 
