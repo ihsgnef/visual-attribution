@@ -51,7 +51,7 @@ classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship'
 
 # Model
 print('==> Building model..')
-net = ResNet50()
+net = cifar_ResNet50()
 # net = DenseNet121()
 # net = ResNeXt29_2x64d()
 net = net.cuda()

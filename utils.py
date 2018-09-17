@@ -2,7 +2,13 @@ from torchvision import models
 from torch.autograd import Variable
 from torch._thnn import type2backend
 import torch
-        
+import os
+import glob
+import numpy as np
+import viz
+import torchvision
+import torchvision.transforms as transforms
+
 def load_model(arch):
     '''
     Args:
@@ -14,34 +20,42 @@ def load_model(arch):
         model = resnet50()
         model = torch.nn.DataParallel(model).cuda()
         checkpoint = torch.load('checkpoint.pth.tar')
-        model.load_state_dict(checkpoint['state_dict'])        
+        model.load_state_dict(checkpoint['state_dict'])       
+    if arch == 'cifar50':
+        from cifar.models import cifar_resnet
+        model = cifar_resnet.cifar_ResNet50()
+        # net = DenseNet121()
+        # net = ResNeXt29_2x64d()
+        model = torch.nn.DataParallel(model).cuda()
+        checkpoint = torch.load('./cifar/checkpoint/ckpt.t7')
+        torch.backends.cudnn.enabled=False
+        model.load_state_dict(checkpoint['net'])
+    
     else:
         model = models.__dict__[arch](pretrained=True)
     model.cuda()        
     model.eval()
     return model
 
-def load_data(batch_size, dataset='imagenet'):
+def load_data(batch_size, num_images, transf, dataset='imagenet'):
     batches = []
     if dataset == 'imagenet':
         image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
         image_files = list(glob.iglob(image_path, recursive=True))
         np.random.seed(0)
         np.random.shuffle(image_files)
-        image_files = image_files[:1000]
+        image_files = image_files[:num_images]
         indices = list(range(0, len(image_files), batch_size))
         for batch_idx, start in enumerate(indices):
             batch = image_files[start: start + batch_size]
-            raw_images = [viz.pil_loader(x) for x in batch]
+            raw_images = torch.stack([transf(viz.pil_loader(x)) for x in batch])
             batches.append(raw_images)
         return batches
 
     if dataset == 'cifar10':
-        testset = torchvision.datasets.CIFAR10(root='./pytorch-cifar/data', train=False, download=True, transform=transforms.ToTensor())#transform=transform_test)
-        testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False, num_workers=2)
+        testset = torchvision.datasets.CIFAR10(root='./cifar/data', train=False, download=True, transform=transforms.ToTensor())#transform=transform_test)
+        testloader = torch.utils.data.DataLoader(testset, batch_size=batch_size, shuffle=False)
         for inputs, targets in testloader:
-            #inputs, targets = Variable(inputs).cuda(), Variable(targets).cuda()
-            print(inputs)
             batches.append(inputs)
         return batches
         
