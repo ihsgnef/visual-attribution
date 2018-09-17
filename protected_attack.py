@@ -8,8 +8,9 @@ import copy
 from collections import Iterable
 import torch.nn as nn
 from torch.autograd import Variable
-import torch.nn.functional as F
 import torchvision.transforms as transforms
+import torch.nn.functional as F
+import torchvision
 import os
 import glob
 
@@ -44,7 +45,7 @@ def attackUnImportant(saliency, cutoff = 0.10):
     return new_saliency
 
 def run_protected(raw_images, cutoff):
-    transf = get_preprocess('resnet50', 'sparse')
+    transf = get_preprocess('resnet50', 'sparse','cifar10')
     model = utils.load_model('resnet50')
     model.cuda()
     model.eval()
@@ -68,7 +69,7 @@ def run_protected(raw_images, cutoff):
         #['integrate_grad', None],
     ]
         
-    inputs = torch.stack([transf(x) for x in raw_images])
+    inputs = torch.stack([x for x in raw_images])
     inputs = Variable(inputs.cuda(), requires_grad=True)
     scores = dict()
     for method_name, kwargs in configs:
@@ -78,6 +79,7 @@ def run_protected(raw_images, cutoff):
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
         else:
             explainer = get_explainer(model, method_name, kwargs)
+            print(inputs.shape)
             saliency = explainer.explain(copy.deepcopy(inputs), None)
             saliency = viz.VisualizeImageGrayscale(saliency)       
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
@@ -92,8 +94,14 @@ def run_protected(raw_images, cutoff):
 if __name__ == '__main__':
     cutoffs = [10,20,30,40,50,60,70,80,90] # percentage adversary can see    
     for cutoff in cutoffs:
-        image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
-        image_files = list(glob.iglob(image_path, recursive=True))
+        #image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
+        testset = torchvision.datasets.CIFAR10(root='./pytorch-cifar/data', train=False, download=True, transform=transforms.ToTensor())#transform=transform_test)
+        testloader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=2)
+        image_files = []
+        for inputs, targets in testloader:
+            #inputs, targets = Variable(inputs).cuda(), Variable(targets).cuda()
+            image_files.append(inputs)
+        #image_files = list(glob.iglob(image_path, recursive=True))
         np.random.seed(0)
         np.random.shuffle(image_files)
         image_files = image_files[:1000]
@@ -101,7 +109,7 @@ if __name__ == '__main__':
         all_scores = None
         for batch_idx, start in enumerate(indices):
             batch = image_files[start: start + batch_size]
-            raw_images = [viz.pil_loader(x) for x in batch]
+            raw_images = [x for x in batch]#[viz.pil_loader(x) for x in batch]
             scores = run_protected(raw_images, cutoff)
             if all_scores is None:
                 all_scores = scores
