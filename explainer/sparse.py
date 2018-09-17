@@ -6,9 +6,12 @@ from collections import defaultdict
 
 class SparseExplainer(object):
     def __init__(self, model,
-                 lambda_t1=1, lambda_t2=0,
+                 lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10, optim='sgd', lr=1e-2):
+                 n_iterations=10, optim='sgd', lr=0.1):
+                 # lambda_t1=1, lambda_t2=0,
+                 # lambda_l1=0, lambda_l2=0,
+                 # n_iterations=1, optim='sgd', lr=0.001):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -25,7 +28,7 @@ class SparseExplainer(object):
         delta = nn.Parameter(delta, requires_grad=True)
 
         if self.optim == 'sgd':
-            optimizer = torch.optim.SGD([delta], lr=self.lr)
+            optimizer = torch.optim.SGD([delta], lr=self.lr, momentum=0.9)
         elif self.optim == 'adam':
             optimizer = torch.optim.Adam([delta], lr=self.lr)
 
@@ -65,14 +68,11 @@ class SparseExplainer(object):
                 loss_history['grad'] = [- self.lambda_t1 * taylor_1]
                 loss_history['hessian'] = [- self.lambda_t2 * taylor_2]
 
-            # print(taylor_1.data.cpu().numpy(), taylor_2.data.cpu().numpy(),
-            #       l1_term.data.cpu().numpy(), l2_term.data.cpu().numpy())
-            # print(loss)
-
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+
         delta = delta.view((batch_size, n_chs, img_height, img_width))
         if return_loss:
             return delta.data.abs(), loss_history
-        return delta.data.abs()    # abs as recommended by sohiel
+        return delta.data

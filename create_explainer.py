@@ -1,5 +1,6 @@
 from explainer import backprop as bp
 from explainer import deeplift as df
+from explainer import sparse_deeplift as sdf
 from explainer import gradcam as gc
 from explainer import patterns as pt
 from explainer import ebp
@@ -15,6 +16,7 @@ def get_explainer(model, name, extra_args):
         'deconv': bp.DeconvExplainer,
         'guided_backprop': bp.GuidedBackpropExplainer,
         'deeplift_rescale': df.DeepLIFTRescaleExplainer,
+        'deeplift_rescale_sparse': sdf.SparseDeepLIFTRescaleExplainer,
         'gradcam': gc.GradCAMExplainer,
         'pattern_net': pt.PatternNetExplainer,
         'pattern_lrp': pt.PatternLRPExplainer,

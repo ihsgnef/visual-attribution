@@ -16,38 +16,34 @@ from matplotlib import pyplot as plt
 
 def get_saliency(model, explainer, inp, raw_img,
                  model_name, method_name, viz_style, filename):
-    if method_name == 'googlenet':  # swap channel due to caffe weights
-        inp_copy = inp.clone()
-        inp[0] = inp_copy[2]
-        inp[2] = inp_copy[0]
+
     inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
+    saliency = explainer.explain(inp, None)
+    # smap = utils.upsample(saliency, (raw_img.height, raw_img.width))
+    # smap = smap.cpu().numpy()
 
-    # target = torch.LongTensor([image_class]).cuda()
-    target = None
-    saliency = explainer.explain(inp, target)
-    smap = utils.upsample(saliency, (raw_img.height, raw_img.width))
-    smap = smap.cpu().numpy()
+    # if viz_style == 'camshow':
+    #     viz.plot_cam(np.abs(smap).max(axis=1).squeeze(),
+    #                  raw_img, 'jet', alpha=0.5)
+    # else:
+    #     if model_name == 'googlenet' or method_name == 'pattern_net':
+    #         smap = smap.squeeze()[::-1].transpose(1, 2, 0)
+    #     else:
+    #         smap = smap.squeeze().transpose(1, 2, 0)
+    #     smap -= smap.min()
+    #     smap /= (smap.max() + 1e-20)
+    #     plt.imshow(smap, cmap='gray')
+    # plt.axis('off')
+    # plt.savefig(filename)
 
-    if viz_style == 'camshow':
-        viz.plot_cam(np.abs(smap).max(axis=1).squeeze(),
-                     raw_img, 'jet', alpha=0.5)
-    else:
-        if model_name == 'googlenet' or method_name == 'pattern_net':
-            smap = smap.squeeze()[::-1].transpose(1, 2, 0)
-        else:
-            smap = smap.squeeze().transpose(1, 2, 0)
-        smap -= smap.min()
-        smap /= (smap.max() + 1e-20)
-        plt.imshow(smap, cmap='gray')
-    plt.axis('off')
+    saliency = viz.VisualizeImageGrayscale(saliency)
+    viz.ShowGrayscaleImage(saliency.cpu().numpy()[0])
     plt.savefig(filename)
-
-    saliency = VisualizeImageGrayscale(saliency)
+    plt.axis('off')
     return saliency
 
-
 def lambda_l1_n_iter(input_path, output_path):
-    model_name = 'resnet50'
+    model_name = 'resnet18' #######################################resnet50
     method_name = 'sparse'
     viz_style = 'imshow'
     raw_img = viz.pil_loader(input_path)
@@ -55,8 +51,8 @@ def lambda_l1_n_iter(input_path, output_path):
     model = utils.load_model(model_name)
     model.cuda()
 
-    lambda_l1s = [1, 1e2, 1e3, 1e4, 1e5, 1e6]
-    n_iterations = list(range(1, 15))
+    lambda_l1s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9]
+    n_iterations = [10]#list(range(1, 15))
     all_configs = list(itertools.product(lambda_l1s, n_iterations))
     all_configs = [{'lambda_l1': ll1, 'n_iterations': n_iter}
                    for ll1, n_iter in all_configs]
@@ -93,7 +89,7 @@ def lambda_l1_l2(input_path, output_path):
     model = utils.load_model(model_name)
     model.cuda()
 
-    lambda_l1s = [1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
+    lambda_l1s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7]
     lambda_l2s = [0, 1, 1e2, 1e3, 1e4, 1e5, 1e6]
     all_configs = list(itertools.product(lambda_l1s, lambda_l2s))
     all_configs = [{'lambda_l1': ll1, 'lambda_l2': ll2}
@@ -163,9 +159,9 @@ def baselines(input_path, output_path):
 
 
 if __name__ == '__main__':
-    baselines(input_path='examples/tricycle.png',
-              output_path='output/tricycle')
-    lambda_l1_n_iter(input_path='examples/tricycle.png',
-                     output_path='output/tricycle')
-    lambda_l1_l2(input_path='examples/tricycle.png',
-                 output_path='output/tricycle')
+    # baselines(input_path='examples/tricycle.png',
+    #           output_path='output/tricycle')
+    #lambda_l1_n_iter(input_path='examples/fox.png',
+    #                 output_path='output/fox')
+    lambda_l1_l2(input_path='examples/fox.png',
+                 output_path='output/fox')
