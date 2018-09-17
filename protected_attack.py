@@ -8,21 +8,13 @@ import copy
 from collections import Iterable
 import torch.nn as nn
 from torch.autograd import Variable
-import torch.nn.functional as F
 import torchvision.transforms as transforms
+import torch.nn.functional as F
+import torchvision
 import os
 import glob
-from resnet import resnet50
-
 
 batch_size = 8
-
-# inv_normalize = transforms.Compose([         
-#     transforms.Normalize(mean=[-0.485/0.229, -0.456/0.224, -0.406/0.255],
-#         std=[1/0.229, 1/0.224, 1/0.255]),
-#     transforms.Scale((299, 299)),
-#     # transforms.ToPILImage(),
-#     ])
 
 def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
     output = model(X)
@@ -40,8 +32,6 @@ def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     return X
 
 def attackUnImportant(saliency, cutoff = 0.10):               
-    # if cutoff == 0:
-    #     protected_percentile = -1  
     batch_size, height, width = saliency.shape  
     saliency = np.abs(saliency)
     new_saliency = []
@@ -55,16 +45,8 @@ def attackUnImportant(saliency, cutoff = 0.10):
     return new_saliency
 
 def run_protected(raw_images, cutoff):
-    transf = get_preprocess('resnet50', 'sparse')
-    
-    softplus = True    
-    if softplus:
-        model = resnet50()
-        model = torch.nn.DataParallel(model).cuda()
-        checkpoint = torch.load('checkpoint.pth.tar')
-        model.load_state_dict(checkpoint['state_dict'])
-    else:
-        model = utils.load_model('resnet50')
+    transf = get_preprocess('resnet50', 'sparse','cifar10')
+    model = utils.load_model('resnet50')
     model.cuda()
     model.eval()
 
@@ -87,7 +69,7 @@ def run_protected(raw_images, cutoff):
         #['integrate_grad', None],
     ]
         
-    inputs = torch.stack([transf(x) for x in raw_images])
+    inputs = torch.stack([x for x in raw_images])
     inputs = Variable(inputs.cuda(), requires_grad=True)
     scores = dict()
     for method_name, kwargs in configs:
@@ -97,6 +79,7 @@ def run_protected(raw_images, cutoff):
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
         else:
             explainer = get_explainer(model, method_name, kwargs)
+            print(inputs.shape)
             saliency = explainer.explain(copy.deepcopy(inputs), None)
             saliency = viz.VisualizeImageGrayscale(saliency)       
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
@@ -111,17 +94,9 @@ def run_protected(raw_images, cutoff):
 if __name__ == '__main__':
     cutoffs = [10,20,30,40,50,60,70,80,90] # percentage adversary can see    
     for cutoff in cutoffs:
-        image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
-        image_files = list(glob.iglob(image_path, recursive=True))
-        np.random.seed(0)
-        np.random.shuffle(image_files)
-        image_files = image_files[:1000]
-        indices = list(range(0, len(image_files), batch_size))
-        all_scores = None
-        for batch_idx, start in enumerate(indices):
-            batch = image_files[start: start + batch_size]
-            raw_images = [viz.pil_loader(x) for x in batch]
-            scores = run_protected(raw_images, cutoff)
+        batches = utils.load_data(batch_size=batch_size, dataset='imagenet')
+        for batch in batches:
+            scores = run_protected(batch, cutoff)
             if all_scores is None:
                 all_scores = scores
                 continue
