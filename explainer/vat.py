@@ -40,7 +40,7 @@ class VATExplainer:
         self.xi = xi
         self.n_iterations = n_iterations
 
-    def explain(self, x):
+    def explain(self, x, ind=None):
         pred = F.softmax(self.model(x), dim=1).detach()
 
         # random unit tensor
