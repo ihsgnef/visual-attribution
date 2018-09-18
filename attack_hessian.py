@@ -9,6 +9,8 @@ from scipy.stats import spearmanr
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
+import torchvision
+import torchvision.transforms as transforms
 
 import viz
 import utils
@@ -49,16 +51,23 @@ configs = [
         'optim': 'sgd',
         'lr': 0.1,
      }],
-    ['vat 1', {'n_iterations': 1}],
-    ['vat 10', {'n_iterations': 10}],
-    ['vat 20', {'n_iterations': 20}],
+    ['vat 1',
+     {'n_iterations': 1,
+      'xi': 0.1,
+      }],
+    ['vat 10',
+     {'n_iterations': 10,
+      'xi': 0.1,
+      }],
+    ['vat 20',
+     {'n_iterations': 20,
+      'xi': 0.1,
+      }],
     # ['vanilla_grad', None],
     # ['grad_x_input', None],
     # ['smooth_grad', None],
     # ['integrate_grad', None],
 ]
-
-transf = get_preprocess('resnet50', 'sparse')
 
 
 def zero_grad(x):
@@ -265,6 +274,8 @@ def saliency_correlation(s1, s2, image):
 
 
 def channel_correlation(s1, s2, image):
+    s1 = (s1 * image).abs()
+    s2 = (s2 * image).abs()
     assert s1.shape == s2.shape
     assert s1.ndimension() == 4  # batch, 3, height, width
     batch_size = s1.shape[0]
@@ -442,26 +453,64 @@ def attack_test(model, raw_images):
     return results
 
 
-image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
-image_files = list(glob.iglob(image_path, recursive=True))
-np.random.seed(0)
-np.random.shuffle(image_files)
-batch_size = 8
-batch_indices = list(range(0, len(image_files), batch_size))
-print('image path loaded')
+def setup_imagenet(batch_size):
 
-model = utils.load_model('resnet50')
-model.eval()
-model.cuda()
-print('model loaded')
+    def batch_loader(image_files):
+        return [viz.pil_loader(x) for x in image_files]
+
+    image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
+    image_files = list(glob.iglob(image_path, recursive=True))
+    np.random.seed(0)
+    np.random.shuffle(image_files)
+    batch_indices = list(range(0, len(image_files), batch_size))
+    image_files = [image_files[i: i + batch_size] for i in batch_indices]
+    image_batches = map(batch_loader, image_files)
+    n_batches = len(image_files)
+    print('image path loaded', n_batches)
+    
+    model = utils.load_model('resnet50')
+    model.eval()
+    model.cuda()
+    print('model loaded')
+
+    transf = get_preprocess('resnet50', 'sparse')
+    return image_batches, n_batches, model, transf
+
+
+def setup_cifar10(batch_size):
+
+    def batch_loader(loaded):
+        idx, (inputs, targets) = loaded
+        return inputs
+
+    data = torchvision.datasets.CIFAR10(
+        root='./cifar/data', train=False, download=True,
+        transform=transforms.ToTensor())
+    loader = torch.utils.data.DataLoader(data, batch_size, shuffle=False)
+    n_batches = len(loader)
+    batches = map(batch_loader, loader)
+    print('image path loaded', n_batches)
+
+    model = utils.load_model('cifar50')
+    model.cuda()
+    model.eval()
+    print('model loaded')
+
+    transf = get_preprocess('resnet50', 'sparse', 'cifar10')
+    return batches, n_batches, model, transf
+
+
+image_batches, n_batches, model, transf = setup_imagenet(16)
+# image_batches, n_batches, model, transf = setup_cifar10(16)
 
 
 def run_attack_short():
     results = []
-    for batch_idx, start in enumerate(tqdm(batch_indices[:3])):
-        batch = image_files[start: start + batch_size]
-        raw_images = [viz.pil_loader(x) for x in batch]
-        results += attack_test(model, raw_images)
+    n_batches = 3
+    for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
+        if batch_idx >= n_batches:
+            break
+        results += attack_test(model, batch)
     n_scores = len(results[0]) - 2  # number of different scores
     columns = (
         ['method', 'attack'] +
@@ -476,7 +525,6 @@ def run_attack_short():
 def run_attack_long():
     # indices = batch_indices[:100]
     results = []
-    indices = batch_indices
     n_scores = 4  # len(results[0]) - 2  # number of different scores
     columns = (
         ['method', 'attack'] +
@@ -490,27 +538,22 @@ def run_attack_long():
         df = df.groupby(['attack', 'method']).mean()
         # print(df)
 
-    for batch_idx, start in enumerate(tqdm(indices)):
-        if batch_idx <= 812:
-            continue
+    for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
         if batch_idx % 20 == 0 and batch_idx > 0:
             check()
             results = []
-        batch = image_files[start: start + batch_size]
-        raw_images = [viz.pil_loader(x) for x in batch]
-        results += attack_test(model, raw_images)
+        results += attack_test(model, batch)
     if len(results) > 0:
         check()
 
 
 def run_histogram():
     results = []
-    for batch_idx, start in enumerate(batch_indices):
-        if batch_idx > 0:
+    n_batches = 1
+    for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
+        if batch_idx >= n_batches:
             break
-        batch = image_files[start: start + batch_size]
-        raw_images = [viz.pil_loader(x) for x in batch]
-        results += saliency_histogram(model, raw_images)
+        results += saliency_histogram(model, batch)
     columns = (
         ['method', 'channel', 'saliency']
     )
