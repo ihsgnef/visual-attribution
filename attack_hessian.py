@@ -1,3 +1,4 @@
+import json
 import glob
 import itertools
 import numpy as np
@@ -24,24 +25,37 @@ configs = [
         'lambda_t2': 1,
         'lambda_l1': 100,
         'lambda_l2': 1e4,
-        'n_iterations': 20,
+        'n_iterations': 10,
         'optim': 'sgd',
         'lr': 0.1,
      }],
     ['sparse 2',
      {
+        'lambda_t1': 0,
+        'lambda_t2': 1,
+        'lambda_l1': 100,
+        'lambda_l2': 1e4,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 0.1,
+     }],
+    ['sparse 3',
+     {
         'lambda_t1': 1,
         'lambda_t2': 1,
         'lambda_l1': 0,
         'lambda_l2': 1e4,
-        'n_iterations': 20,
+        'n_iterations': 10,
         'optim': 'sgd',
         'lr': 0.1,
      }],
-    ['vanilla_grad', None],
+    ['vat 1', {'n_iterations': 1}],
+    ['vat 10', {'n_iterations': 10}],
+    ['vat 20', {'n_iterations': 20}],
+    # ['vanilla_grad', None],
     # ['grad_x_input', None],
-    ['smooth_grad', None],
-    ['integrate_grad', None],
+    # ['smooth_grad', None],
+    # ['integrate_grad', None],
 ]
 
 transf = get_preprocess('resnet50', 'sparse')
@@ -235,8 +249,10 @@ class GhorbaniAttack:
         return perturbed, accu_perturb
 
 
-def saliency_correlation(s1, s2):
+def saliency_correlation(s1, s2, image):
     # s1 and s2 are batched
+    s1 = aggregate(s1, image)
+    s2 = aggregate(s2, image)
     assert s1.shape == s2.shape
     assert s1.ndimension() == 3  # batch, height, width
     batch_size = s1.shape[0]
@@ -248,7 +264,20 @@ def saliency_correlation(s1, s2):
     return scores
 
 
-def saliency_overlap(s1, s2):
+def channel_correlation(s1, s2, image):
+    assert s1.shape == s2.shape
+    assert s1.ndimension() == 4  # batch, 3, height, width
+    batch_size = s1.shape[0]
+    s1 = s1.cpu().numpy().reshape(batch_size, 3, -1)
+    s2 = s2.cpu().numpy().reshape(batch_size, 3, -1)
+    scores = []
+    for x1, x2 in zip(s1, s2):
+        scores.append(spearmanr(x1[k], x2[k]).correlation for k in range(3))
+    scores = list(map(list, zip(*scores)))
+    return scores
+
+
+def saliency_overlap(s1, s2, image):
     assert s1.shape == s2.shape
     batch_size = s1.shape[0]
     s1 = s1.cpu().numpy().reshape(batch_size, -1)
@@ -287,12 +316,12 @@ def aggregate(saliency, image):
     image = image.cpu()
     # return binit(saliency)
     # return viz.VisualizeImageGrayscale(saliency)
-    return saliency.abs().sum(dim=1)
+    # return saliency.abs().sum(dim=1)
     # # return saliency.max(dim=1)[0]
     # # return saliency.abs().max(dim=1)[0]
     # # return saliency.sum(dim=1)
     # # return (saliency * image).sum(dim=1)
-    # # return (saliency * image).abs().sum(dim=1)
+    return (saliency * image).abs().sum(dim=1)
     # # return (saliency * image).abs().max(dim=1)[0]
     # # return (saliency * image).max(dim=1)[0]
 
@@ -328,11 +357,10 @@ def saliency_histogram(model, raw_images):
     for method_name, kwargs in configs:
         explainer = get_explainer(model, method_name, kwargs)
         batch_size = len(raw_images)
-        images = torch.stack([transf(x) for x in raw_images])
+        images = torch.stack([transf(x) for x in raw_images]).cuda()
         batch_size, n_chs, height, width = images.shape
-        inputs = Variable(images.clone().cuda(), requires_grad=True)
-        saliency = explainer.explain(inputs)
-        saliency = saliency.cpu().numpy()
+        inputs = Variable(images.clone(), requires_grad=True)
+        saliency = explainer.explain(inputs).cpu().numpy()
         saliency = saliency.reshape(batch_size, n_chs, height * width)
         # don't aggregate, look at channels separately and in combination
         for i in range(batch_size):
@@ -372,36 +400,37 @@ def attack_test(model, raw_images):
     for method_name, kwargs in configs:
         explainer = get_explainer(model, method_name, kwargs)
         inputs = Variable(images.clone().cuda(), requires_grad=True)
-        saliency_1 = aggregate(explainer.explain(inputs), inputs.data)
+        saliency_1 = explainer.explain(inputs)
         for perturbed, delta, attack_name in attacks:
             # unrestricted perturbation
             inputs = perturbed.clone()
             inputs = Variable(inputs.cuda(), requires_grad=True)
-            saliency_2 = aggregate(explainer.explain(inputs), inputs.data)
+            saliency_2 = explainer.explain(inputs)
 
             # # only perturb highlighted region
             # inputs = perturb(images, delta, saliency_1)
             # inputs = Variable(inputs.cuda(), requires_grad=True)
-            # saliency_3 = aggregate(explainer.explain(inputs), inputs.data)
+            # saliency_3 = explainer.explain(inputs)
 
             # # perturb outside highlighted region
             # inputs = perturb(images, delta, saliency_1, flip=True)
             # inputs = Variable(inputs.cuda(), requires_grad=True)
-            # saliency_4 = aggregate(explainer.explain(inputs), inputs.data)
+            # saliency_4 = explainer.explain(inputs)
 
             scores = [
-                saliency_correlation(saliency_1, saliency_2),
-                # saliency_correlation(saliency_1, saliency_3),
-                # saliency_correlation(saliency_1, saliency_4),
+                saliency_correlation(saliency_1, saliency_2, inputs.data),
+                *channel_correlation(saliency_1, saliency_2, inputs.data),
+                # saliency_correlation(saliency_1, saliency_3, inputs.data),
+                # saliency_correlation(saliency_1, saliency_4, inputs.data),
 
-                saliency_overlap(saliency_1, saliency_2),
-                # saliency_overlap(saliency_1, saliency_3),
-                # saliency_overlap(saliency_1, saliency_4),
+                saliency_overlap(saliency_1, saliency_2, inputs.data),
+                # saliency_overlap(saliency_1, saliency_3, inputs.data),
+                # saliency_overlap(saliency_1, saliency_4, inputs.data),
 
-                saliency_overlap(saliency_1, aggregate(delta, inputs.data)),
-                saliency_overlap(saliency_2, aggregate(delta, inputs.data)),
-                # saliency_overlap(saliency_3, aggregate(delta, inputs.data)),
-                # saliency_overlap(saliency_4, aggregate(delta, inputs.data)),
+                # saliency_overlap(saliency_1, delta, inputs.data),
+                # saliency_overlap(saliency_2, delta, inputs.data),
+                # saliency_overlap(saliency_3, delta, inputs.data),
+                # saliency_overlap(saliency_4, delta, inputs.data),
             ]
             scores = list(map(list, zip(*scores)))
 
@@ -421,16 +450,24 @@ batch_size = 8
 batch_indices = list(range(0, len(image_files), batch_size))
 print('image path loaded')
 
-model = utils.load_model('softplus50')
+model = utils.load_model('resnet50')
 model.eval()
 model.cuda()
 print('model loaded')
 
 
-def run_attack_test():
+def run_attack_cifar():
+    transf = get_preprocess('resnet50', 'sparse', 'cifar10')
+    batches = utils.load_data(batch_size=16,
+                              num_images=16,
+                              transf=transf,
+                              dataset='cifar10')
+    model = utils.load_model('cifar50')
+
+
+def run_attack_short():
     results = []
-    n_batches = 100
-    for batch_idx, start in enumerate(tqdm(batch_indices[:n_batches])):
+    for batch_idx, start in enumerate(tqdm(batch_indices[:3])):
         batch = image_files[start: start + batch_size]
         raw_images = [viz.pil_loader(x) for x in batch]
         results += attack_test(model, raw_images)
@@ -439,9 +476,40 @@ def run_attack_test():
         ['method', 'attack'] +
         ['score_{}'.format(i) for i in range(n_scores)]
     )
-    results = pd.DataFrame(results, columns=columns)
-    results = results.groupby(['attack', 'method']).mean()
-    print(results)
+    df = pd.DataFrame(results, columns=columns)
+    with open('output/results.812.json') as f:
+        df = df.append(pd.DataFrame(json.load(f)), ignore_index=True)
+    print(df.groupby(['attack', 'method']).mean())
+
+
+def run_attack_long():
+    # indices = batch_indices[:100]
+    results = []
+    indices = batch_indices
+    n_scores = 4  # len(results[0]) - 2  # number of different scores
+    columns = (
+        ['method', 'attack'] +
+        ['score_{}'.format(i) for i in range(n_scores)]
+    )
+
+    def check():
+        df = pd.DataFrame(results, columns=columns)
+        with open('output/results.{}.json'.format(batch_idx), 'w') as f:
+            f.write(df.to_json())
+        df = df.groupby(['attack', 'method']).mean()
+        # print(df)
+
+    for batch_idx, start in enumerate(tqdm(indices)):
+        if batch_idx <= 812:
+            continue
+        if batch_idx % 20 == 0 and batch_idx > 0:
+            check()
+            results = []
+        batch = image_files[start: start + batch_size]
+        raw_images = [viz.pil_loader(x) for x in batch]
+        results += attack_test(model, raw_images)
+    if len(results) > 0:
+        check()
 
 
 def run_histogram():
@@ -459,8 +527,10 @@ def run_histogram():
     results = results.groupby(['channel', 'method'])
     results = results.agg(lambda x: len(list(itertools.chain(*x))))
     print(results)
+    with open('histogram.json', 'w') as f:
+        json.dump(results.to_json(), f)
 
 
 if __name__ == '__main__':
-    run_attack_test()
+    run_attack_short()
     # run_histogram()

@@ -6,6 +6,7 @@ from explainer import patterns as pt
 from explainer import ebp
 from explainer import real_time as rt
 from explainer import sparse as sparse
+from explainer import vat
 
 
 def get_explainer(model, name, extra_args):
@@ -26,7 +27,8 @@ def get_explainer(model, name, extra_args):
         'real_time_saliency': rt.RealTimeSaliencyExplainer,
         'sparse': sparse.SparseExplainer,
         'sparse_integrate_grad': bp.SparseIntegrateGradExplainer,
-        'sparse_guided_backprop': bp.SparseGuidedBackpropExplainer
+        'sparse_guided_backprop': bp.SparseGuidedBackpropExplainer,
+        'vat': vat.VATExplainer,
     }
 
     name = name.split(' ')[0]
