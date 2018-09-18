@@ -456,15 +456,6 @@ model.cuda()
 print('model loaded')
 
 
-def run_attack_cifar():
-    transf = get_preprocess('resnet50', 'sparse', 'cifar10')
-    batches = utils.load_data(batch_size=16,
-                              num_images=16,
-                              transf=transf,
-                              dataset='cifar10')
-    model = utils.load_model('cifar50')
-
-
 def run_attack_short():
     results = []
     for batch_idx, start in enumerate(tqdm(batch_indices[:3])):

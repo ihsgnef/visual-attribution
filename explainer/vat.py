@@ -44,14 +44,14 @@ class VATExplainer:
         pred = F.softmax(self.model(x), dim=1).detach()
 
         # random unit tensor
-        d = Variable(torch.rand(x.shape).sub(0.5).cuda(), requires_grad=True)
+        d = torch.rand(x.shape).sub(0.5).cuda()
         d = _l2_normalize(d)
 
         for _ in range(self.n_iterations):
             self.model.zero_grad()
-            pred_hat = self.model(x + self.xi * d)
+            d = Variable(self.xi * d, requires_grad=True)
+            pred_hat = self.model(x + d)
             adv_loss = _kl_div(F.log_softmax(pred_hat, dim=1), pred)
             d_grad, = torch.autograd.grad(adv_loss, d)
             d = _l2_normalize(d_grad.data)
-            d = Variable(d, requires_grad=True)
-        return d.data
+        return d
