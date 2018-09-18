@@ -24,17 +24,17 @@ configs = [
         'lambda_t2': 1,
         'lambda_l1': 100,
         'lambda_l2': 1e4,
-        'n_iterations': 10,
+        'n_iterations': 20,
         'optim': 'sgd',
         'lr': 0.1,
      }],
     ['sparse 2',
      {
         'lambda_t1': 1,
-        'lambda_t2': 0,
-        'lambda_l1': 100,
+        'lambda_t2': 1,
+        'lambda_l1': 0,
         'lambda_l2': 1e4,
-        'n_iterations': 10,
+        'n_iterations': 20,
         'optim': 'sgd',
         'lr': 0.1,
      }],
@@ -46,6 +46,16 @@ configs = [
 
 transf = get_preprocess('resnet50', 'sparse')
 
+
+def zero_grad(x):
+    if isinstance(x, Variable):
+        if x.grad is not None:
+            x.grad.data.zero_()
+    elif isinstance(x, torch.nn.Module):
+        for p in x.parameters():
+                if p.grad is not None:
+                    p.grad.data.zero_()
+    
 
 class NoiseAttack:
 
@@ -61,6 +71,30 @@ class NoiseAttack:
         return perturbed, noise
 
 
+class FGSM:
+
+    def __init__(self, model, epsilon=2 / 255, n_iterations=10):
+        self.model = model
+        self.epsilon = epsilon
+        self.n_iterations = n_iterations
+
+    def attack(self, inp):
+        inp_org = inp.clone()
+        batch_size, n_chs, img_height, img_width = inp.shape
+        step_size = self.epsilon / self.n_iterations
+        for i in range(self.n_iterations):
+            zero_grad(model)
+            new_inp = Variable(inp, requires_grad=True)
+            output = self.model(new_inp)
+            out_loss = F.cross_entropy(output, output.max(1)[1])
+            inp_grad, = torch.autograd.grad(
+                out_loss, new_inp, create_graph=True)
+            inp_grad = inp_grad.view(batch_size, n_chs, -1)
+            delta = inp_grad.sign().data
+            inp = torch.clamp(inp + step_size * delta, 0, 1)
+        return inp, inp - inp_org
+
+
 class ScaledNoiseAttack:
 
     def __init__(self, epsilon):
@@ -74,22 +108,6 @@ class ScaledNoiseAttack:
         perturbed = torch.FloatTensor(perturbed)
         noise = torch.FloatTensor(noise)
         return perturbed, noise
-
-
-def zero_grad(x):
-    if isinstance(x, Variable):
-        if x.grad is not None:
-            x.grad.data.zero_()
-    elif isinstance(x, torch.nn.Module):
-        for p in x.parameters():
-                if p.grad is not None:
-                    p.grad.data.zero_()
-    
-
-def cuvar(tensor):
-    if isinstance(tensor, Variable):
-        return tensor
-    return Variable(tensor.cuda(), requires_grad=True)
 
 
 class GhorbaniAttackFast:
@@ -244,27 +262,47 @@ def saliency_overlap(s1, s2):
     return scores
 
 
+def binit(saliency):
+    '''normalize saliency values then bin'''
+    batch_size, _, height, width = saliency.shape
+    s = saliency.cpu().numpy()
+    s = np.abs(s).sum(1)
+    s = s.reshape(batch_size, -1)
+    # vmax = np.expand_dims(np.percentile(s, 90), 1)
+    # vmin = np.expand_dims(np.percentile(s, 10), 1)
+    vmax = np.expand_dims(np.max(s, 1), 1)
+    vmin = np.expand_dims(np.min(s, 1), 1)
+    s = (s - vmin) / (vmax - vmin)
+    s = np.digitize(s, np.arange(0, 1, 1 / 10)) / 10
+    s = np.clip(s, 0, 1)
+    s = s.reshape(batch_size, height, width)
+    return torch.FloatTensor(s)
+
+
 def aggregate(saliency, image):
-    '''combine saliency mapping with image'''
+    '''combine saliency mapping with image
+    from 4D (bsz, 3, h, w) to 3D (bsz, h, w)
+    '''
     saliency = saliency.cpu()
     image = image.cpu()
+    # return binit(saliency)
     # return viz.VisualizeImageGrayscale(saliency)
-    # return saliency.max(dim=1)[0]
-    # return saliency.abs().max(dim=1)[0]
-    # return saliency.sum(dim=1)
     return saliency.abs().sum(dim=1)
-    # return (saliency * image).sum(dim=1)
-    # return (saliency * image).abs().sum(dim=1)
-    # return (saliency * image).abs().max(dim=1)[0]
-    # return (saliency * image).max(dim=1)[0]
+    # # return saliency.max(dim=1)[0]
+    # # return saliency.abs().max(dim=1)[0]
+    # # return saliency.sum(dim=1)
+    # # return (saliency * image).sum(dim=1)
+    # # return (saliency * image).abs().sum(dim=1)
+    # # return (saliency * image).abs().max(dim=1)[0]
+    # # return (saliency * image).max(dim=1)[0]
 
 
-def perturb(image, delta, mask=None, flip=False):
+def perturb(image, delta, mask, flip=False):
     '''perturb image with delta within mask
     create zero-one mask where locations with high mask value get one
     if flip is True, flip the sign of zero-one mask
     '''
-    K = 1000
+    K = 10000
     assert len(image.shape)
     assert mask.ndimension() == 3  # batch, height, width
     assert image.shape == delta.shape
@@ -306,16 +344,6 @@ def saliency_histogram(model, raw_images):
 
 def attack_test(model, raw_images):
     attackers = [
-        (GhorbaniAttack(
-            model,
-            lambda_t1=0,
-            lambda_t2=1,
-            lambda_l1=0,
-            lambda_l2=0,
-            n_iterations=30,
-            optim='sgd',
-            lr=1e-2,
-            epsilon=EPSILON), 'gho'),
         (GhorbaniAttackFast(
             model,
             lambda_t1=0,
@@ -325,30 +353,27 @@ def attack_test(model, raw_images):
             n_iterations=30,
             optim='sgd',
             lr=1e-2,
-            epsilon=EPSILON), 'ghof'),
+            epsilon=EPSILON), 'gho'),
+        # (FGSM(model, epsilon=EPSILON, n_iterations=10), 'fgsm'),
         # (NoiseAttack(epsilon=EPSILON), 'srnd'),
         (ScaledNoiseAttack(epsilon=EPSILON), 'rnd'),
     ]
 
     '''construct attacks'''
     attacks = []
+    images = torch.stack([transf(x) for x in raw_images]).cuda()
     for atk, attack_name in attackers:
-        images = torch.stack([transf(x) for x in raw_images]).cuda()
-        perturbed, delta = atk.attack(images)
+        perturbed, delta = atk.attack(images.clone())
         attacks.append((perturbed, delta, attack_name))
 
     '''run saliency methods'''
     results = []
+    batch_size = images.shape[0]
     for method_name, kwargs in configs:
         explainer = get_explainer(model, method_name, kwargs)
-        images = torch.stack([transf(x) for x in raw_images])
         inputs = Variable(images.clone().cuda(), requires_grad=True)
         saliency_1 = aggregate(explainer.explain(inputs), inputs.data)
-
         for perturbed, delta, attack_name in attacks:
-            # inputs = perturbed.clone()
-            batch_size = images.shape[0]
-
             # unrestricted perturbation
             inputs = perturbed.clone()
             inputs = Variable(inputs.cuda(), requires_grad=True)
@@ -392,11 +417,11 @@ image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
 image_files = list(glob.iglob(image_path, recursive=True))
 np.random.seed(0)
 np.random.shuffle(image_files)
-batch_size = 16
+batch_size = 8
 batch_indices = list(range(0, len(image_files), batch_size))
 print('image path loaded')
 
-model = utils.load_model('resnet50')
+model = utils.load_model('softplus50')
 model.eval()
 model.cuda()
 print('model loaded')
@@ -404,7 +429,7 @@ print('model loaded')
 
 def run_attack_test():
     results = []
-    n_batches = 1
+    n_batches = 100
     for batch_idx, start in enumerate(tqdm(batch_indices[:n_batches])):
         batch = image_files[start: start + batch_size]
         raw_images = [viz.pil_loader(x) for x in batch]

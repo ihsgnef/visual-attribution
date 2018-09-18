@@ -44,19 +44,16 @@ def ShowGrayscaleImage(im, title='', ax=None):
     P.title(title)
 
 
-def VisualizeImageGrayscale(images, percentile=99):
-    batch_size, n_chns, height, width = images.shape
-    if isinstance(images, Variable):
-        images = images.data
-    images = images.cpu().numpy()
-    images = np.abs(images).sum(axis=1)
-    new_images = []
-    for i in range(batch_size):
-        img = images[i].copy()
-        vmax = np.percentile(img, percentile)
-        vmin = np.min(img)
-        img = np.clip((img - vmin) / (vmax - vmin), 0, 1)
-        new_images.append(img)
-    new_images = np.stack(new_images)
-    assert new_images.shape == (batch_size, height, width)
-    return torch.from_numpy(new_images)
+def VisualizeImageGrayscale(imgs, percentile=99):
+    batch_size, n_chns, height, width = imgs.shape
+    if isinstance(imgs, Variable):
+        imgs = imgs.data
+    imgs = torch.abs(imgs).sum(dim=1)
+    imgs = imgs.view(batch_size, -1)
+    imgs_cpu = imgs.numpy()
+    vmax = np.percentile(imgs_cpu, percentile, axis=1)
+    vmax = torch.FloatTensor(vmax).unsqueeze(1)
+    vmin = torch.min(imgs, dim=1)[0].unsqueeze(1)
+    imgs = torch.clamp((imgs - vmin) / (vmax - vmin), 0, 1)
+    imgs = imgs.view(batch_size, height, width)
+    return imgs
