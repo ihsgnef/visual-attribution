@@ -11,10 +11,8 @@ from torch.autograd import Variable
 import torchvision.transforms as transforms
 import torch.nn.functional as F
 import torchvision
-import os
-import glob
 
-batch_size = 8
+batch_size = 64
 
 def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
     output = model(X)
@@ -44,16 +42,11 @@ def attackUnImportant(saliency, cutoff = 0.10):
     assert new_saliency.shape == (batch_size, height, width)
     return new_saliency
 
-def run_protected(raw_images, cutoff):
-    transf = get_preprocess('resnet50', 'sparse','cifar10')
-    model = utils.load_model('resnet50')
-    model.cuda()
-    model.eval()
-
+def run_protected(inputs, cutoff):
     sparse_args = {
         'lambda_t1': 1,
         'lambda_t2': 1,
-        'lambda_l1': 1000,
+        'lambda_l1': 1e2,
         'lambda_l2': 1e4,
         'n_iterations': 10,
         'optim': 'sgd',
@@ -68,18 +61,17 @@ def run_protected(raw_images, cutoff):
         #['smooth_grad', None],
         #['integrate_grad', None],
     ]
-        
-    inputs = torch.stack([x for x in raw_images])
+    
     inputs = Variable(inputs.cuda(), requires_grad=True)
+    print(inputs.shape)
     scores = dict()
     for method_name, kwargs in configs:
         if method_name == "random":                    
-            saliency = torch.from_numpy(np.random.rand(len(raw_images),3,224,224)).cuda()                      
+            saliency = torch.from_numpy(np.random.rand(len(inputs),3,224,224)).cuda()                      
             saliency = viz.VisualizeImageGrayscale(saliency)
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
         else:
             explainer = get_explainer(model, method_name, kwargs)
-            print(inputs.shape)
             saliency = explainer.explain(copy.deepcopy(inputs), None)
             saliency = viz.VisualizeImageGrayscale(saliency)       
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
@@ -92,9 +84,17 @@ def run_protected(raw_images, cutoff):
     return scores
 
 if __name__ == '__main__':
-    cutoffs = [10,20,30,40,50,60,70,80,90] # percentage adversary can see    
+    dataset = 'cifar10'
+    transf = get_preprocess('resnet50', 'sparse',dataset)
+    model = utils.load_model('cifar50')
+    model.cuda()
+    model.eval()
+
+    cutoffs = [0,10,20,30,40,50,60,70,80,90] # percentage adversary can see    
+    num_images = 64
     for cutoff in cutoffs:
-        batches = utils.load_data(batch_size=batch_size, dataset='imagenet')
+        batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
+        all_scores = None
         for batch in batches:
             scores = run_protected(batch, cutoff)
             if all_scores is None:
@@ -107,7 +107,7 @@ if __name__ == '__main__':
             print("Adversary Can Modify: ", cutoff)
             text_file.write('\n' + str(cutoff) + '\n' +'\n')
             for method_name in all_scores:
-                accuracy = all_scores[method_name] / float(len(image_files) / batch_size)
+                accuracy = all_scores[method_name] / float(num_images / batch_size)
                 print(method_name, accuracy)
                 text_file.write(str(method_name) + '\n')
                 text_file.write(str(accuracy) + '\n')
