@@ -50,7 +50,7 @@ def VisualizeImageGrayscale(imgs, percentile=99):
         imgs = imgs.data
     imgs = torch.abs(imgs).sum(dim=1)
     imgs = imgs.view(batch_size, -1)
-    imgs_cpu = imgs.cpu().numpy()
+    imgs_cpu = imgs.numpy()
     vmax = np.percentile(imgs_cpu, percentile, axis=1)
     vmax = torch.FloatTensor(vmax).unsqueeze(1)
     vmin = torch.min(imgs, dim=1)[0].unsqueeze(1)

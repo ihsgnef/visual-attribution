@@ -12,25 +12,27 @@ import torchvision.transforms as transforms
 import torch.nn.functional as F
 import torchvision
 
-batch_size = 32
+batch_size = 16
 
-def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):         
+def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     output = model(X)
     if y is None:
         y = output.max(1)[1]
-    loss = F.cross_entropy(output, y)        
-    loss.backward()    
+    loss = F.cross_entropy(output, y)
+    loss.backward()
     grad_sign = X.grad.data.cpu().sign().numpy()
     #################################################################### TODO, use different masks?
     protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
-    grad_sign = grad_sign * protected    
-    perturbed_X = X.data.cpu().numpy() + epsilon * grad_sign                
-    perturbed_X = np.clip(perturbed_X, 0, 1)    
-    X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True)    
+    grad_sign = grad_sign * protected
+    perturbed_X = X.data.cpu().numpy() + epsilon * grad_sign
+    perturbed_X = np.clip(perturbed_X, 0, 1)
+    X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True)
     return X
 
-def attackUnImportant(saliency, cutoff = 0.10):               
-    batch_size, height, width = saliency.shape  
+def attackUnImportant(saliency, cutoff = 0.10):
+    if cutoff == 0:
+        return np.zeros_like(saliency)
+    batch_size, height, width = saliency.shape
     saliency = np.abs(saliency)
     new_saliency = []
     for i in range(batch_size):
@@ -56,41 +58,41 @@ def run_protected(inputs, cutoff):
     configs = [
         ['sparse', sparse_args],
         ['vanilla_grad', None],
-        #['random', None], 
+        #['random', None],
         #['grad_x_input', None],
         #['smooth_grad', None],
         #['integrate_grad', None],
     ]
-    
+
     inputs = Variable(inputs.cuda(), requires_grad=True)
     print(inputs.shape)
     scores = dict()
     for method_name, kwargs in configs:
-        if method_name == "random":                    
-            saliency = torch.from_numpy(np.random.rand(len(inputs),3,224,224)).cuda()                      
-            saliency = viz.VisualizeImageGrayscale(saliency)
+        if method_name == "random":
+            saliency = torch.from_numpy(np.random.rand(len(inputs),3,224,224)).cuda()
+            saliency = viz.VisualizeImageGrayscale(saliency.cpu())
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
         else:
             explainer = get_explainer(model, method_name, kwargs)
             saliency = explainer.explain(copy.deepcopy(inputs), None)
-            saliency = viz.VisualizeImageGrayscale(saliency)       
+            saliency = viz.VisualizeImageGrayscale(saliency.cpu())
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
-    
-        adversarial_image = perturb(model, copy.deepcopy(inputs), protected = protected_region)                        
-        original_prediction = model(inputs).max(1, keepdim=True)[1]        
-        adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]        
+
+        adversarial_image = perturb(model, copy.deepcopy(inputs), protected = protected_region)
+        original_prediction = model(inputs).max(1, keepdim=True)[1]
+        adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
         correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
         scores[method_name] = float(correct / batch_size)
     return scores
 
 if __name__ == '__main__':
-    dataset = 'cifar10'
+    dataset = 'imagenet'
     transf = get_preprocess('resnet50', 'sparse',dataset)
-    model = utils.load_model('cifar50')
+    model = utils.load_model('resnet50')
     model.cuda()
     model.eval()
 
-    cutoffs = [0,10,20,30,40,50,60,70,80,90] # percentage adversary can see    
+    cutoffs = [0,10,20,30,40,50,60,70,80,90] # percentage adversary can see
     num_images = 32
     for cutoff in cutoffs:
         batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
@@ -100,7 +102,7 @@ if __name__ == '__main__':
             if all_scores is None:
                 all_scores = scores
                 continue
-            for method_name in scores:                
+            for method_name in scores:
                 all_scores[method_name] += scores[method_name]
 
         with open("protected_results.txt", "a") as text_file:
