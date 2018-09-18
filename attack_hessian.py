@@ -376,8 +376,10 @@ def saliency_histogram(model, raw_images):
         # don't aggregate, look at channels separately and in combination
         for i in range(batch_size):
             for j, chn in enumerate(['R', 'G', 'B']):
-                results.append([method_name, chn, saliency[i][j].tolist()])
-            results.append([method_name, 'sum', saliency[i].sum(1).tolist()])
+                for v in saliency[i][j]:
+                    results.append([method_name, chn, v])
+            for v in saliency[i].sum(1):
+                results.append([method_name, 'sum', v])
     return results
 
 
@@ -557,14 +559,13 @@ def run_histogram():
     columns = (
         ['method', 'channel', 'saliency']
     )
-    results = pd.DataFrame(results, columns=columns)
-    results = results.groupby(['channel', 'method'])
-    results = results.agg(lambda x: len(list(itertools.chain(*x))))
-    print(results)
-    with open('histogram.json', 'w') as f:
-        json.dump(results.to_json(), f)
+    df = pd.DataFrame(results, columns=columns)
+    df = df.groupby(['channel', 'method'])
+    df = df.agg(lambda x: list(itertools.chain(*x)))
+    print(df)
+    df.to_pickle('histogram.pkl')
 
 
 if __name__ == '__main__':
-    run_attack_short()
-    # run_histogram()
+    # run_attack_short()
+    run_histogram()
