@@ -31,7 +31,7 @@ def _kl_div(log_probs, probs):
 
 class VATExplainer:
 
-    def __init__(self, model, xi=10.0, n_iterations=1):
+    def __init__(self, model, xi=1e-6, n_iterations=1):
         """VAT loss
         :param xi: hyperparameter of VAT (default: 10.0)
         :param n_iterations: number of iterations (default: 1)
@@ -41,7 +41,9 @@ class VATExplainer:
         self.n_iterations = n_iterations
 
     def explain(self, x, ind=None):
-        pred = F.softmax(self.model(x), dim=1).detach()
+        output = self.model(x)
+        ind = output.max(1)[1]
+        #pred = F.log_softmax(self.model(x), dim=1).detach()
 
         # random unit tensor
         d = torch.rand(x.shape).sub(0.5).cuda()
@@ -51,7 +53,8 @@ class VATExplainer:
             self.model.zero_grad()
             d = Variable(self.xi * d, requires_grad=True)
             pred_hat = self.model(x + d)
-            adv_loss = _kl_div(F.log_softmax(pred_hat, dim=1), pred)
+            #adv_loss = _kl_div(F.log_softmax(pred_hat, dim=1), pred)
+            adv_loss = F.cross_entropy(pred_hat, ind)
             d_grad, = torch.autograd.grad(adv_loss, d)
             d = _l2_normalize(d_grad.data)
         return d
