@@ -41,27 +41,9 @@ configs = [
         'optim': 'sgd',
         'lr': 0.1,
      }],
-    ['sparse 3',
-     {
-        'lambda_t1': 1,
-        'lambda_t2': 1,
-        'lambda_l1': 0,
-        'lambda_l2': 1e4,
-        'n_iterations': 10,
-        'optim': 'sgd',
-        'lr': 0.1,
-     }],
     ['vat 1',
      {'n_iterations': 1,
-      'xi': 0.1,
-      }],
-    ['vat 10',
-     {'n_iterations': 10,
-      'xi': 0.1,
-      }],
-    ['vat 20',
-     {'n_iterations': 20,
-      'xi': 0.1,
+      'xi': 1e-6,
       }],
     # ['vanilla_grad', None],
     # ['grad_x_input', None],
@@ -436,7 +418,7 @@ def attack_test(model, raw_images):
                 # saliency_correlation(saliency_1, saliency_3, inputs.data),
                 # saliency_correlation(saliency_1, saliency_4, inputs.data),
 
-                saliency_overlap(saliency_1, saliency_2, inputs.data),
+                # saliency_overlap(saliency_1, saliency_2, inputs.data),
                 # saliency_overlap(saliency_1, saliency_3, inputs.data),
                 # saliency_overlap(saliency_1, saliency_4, inputs.data),
 
@@ -482,7 +464,7 @@ def setup_imagenet(batch_size):
 def setup_cifar10(batch_size):
 
     def batch_loader(loaded):
-        idx, (inputs, targets) = loaded
+        inputs, targets = loaded
         return inputs
 
     data = torchvision.datasets.CIFAR10(
@@ -498,12 +480,15 @@ def setup_cifar10(batch_size):
     model.eval()
     print('model loaded')
 
-    transf = get_preprocess('resnet50', 'sparse', 'cifar10')
-    return batches, n_batches, model, transf
+    def null(x):
+        return x
+
+    # transf = get_preprocess('resnet50', 'sparse', 'cifar10')
+    return batches, n_batches, model, null
 
 
-image_batches, n_batches, model, transf = setup_imagenet(16)
-# image_batches, n_batches, model, transf = setup_cifar10(16)
+# image_batches, n_batches, model, transf = setup_imagenet(16)
+image_batches, n_batches, model, transf = setup_cifar10(16)
 
 
 def run_attack_short():
@@ -560,12 +545,12 @@ def run_histogram():
         ['method', 'channel', 'saliency']
     )
     df = pd.DataFrame(results, columns=columns)
-    df = df.groupby(['channel', 'method'])
-    df = df.agg(lambda x: list(itertools.chain(*x)))
+    # df = df.groupby(['channel', 'method'])
+    # df = df.agg(lambda x: list(itertools.chain(*x)))
     print(df)
     df.to_pickle('histogram.pkl')
 
 
 if __name__ == '__main__':
-    # run_attack_short()
-    run_histogram()
+    run_attack_short()
+    # run_histogram()
