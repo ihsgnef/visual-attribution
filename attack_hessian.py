@@ -1,6 +1,5 @@
 import json
 import glob
-import itertools
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -17,8 +16,6 @@ import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 
-
-EPSILON = 2 / 255
 
 configs = [
     ['sparse 1',
@@ -60,12 +57,15 @@ def zero_grad(x):
         for p in x.parameters():
                 if p.grad is not None:
                     p.grad.data.zero_()
-    
+
 
 class NoiseAttack:
 
     def __init__(self, epsilon):
         self.epsilon = epsilon
+
+    def attack_with_saliency(self, inp, saliency):
+        return self.attack(inp)
 
     def attack(self, inp):
         noise = 2 * np.random.randint(2, size=inp.shape) - 1
@@ -83,9 +83,12 @@ class FGSM:
         self.epsilon = epsilon
         self.n_iterations = n_iterations
 
+    def attack_with_saliency(self, inp, saliency):
+        return self.attack(inp)
+
     def attack(self, inp):
         inp_org = inp.clone()
-        batch_size, n_chs, img_height, img_width = inp.shape
+        batch_size, n_chs, height, width = inp.shape
         step_size = self.epsilon / self.n_iterations
         for i in range(self.n_iterations):
             zero_grad(model)
@@ -105,6 +108,9 @@ class ScaledNoiseAttack:
     def __init__(self, epsilon):
         self.epsilon = epsilon
 
+    def attack_with_saliency(self, inp, saliency):
+        return self.attack(inp)
+
     def attack(self, inp):
         inp = inp.cpu().numpy()
         noise = 2 * np.random.randint(2, size=inp.shape) - 1
@@ -115,13 +121,13 @@ class ScaledNoiseAttack:
         return perturbed, noise
 
 
-class GhorbaniAttackFast:
+class GhorbaniAttack:
 
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=1e-2,
-                 epsilon=2 / 255):
+                 epsilon=2 / 255, const_k=1e4):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -131,14 +137,37 @@ class GhorbaniAttackFast:
         self.optim = optim.lower()
         self.lr = lr
         self.epsilon = epsilon
+        self.const_k = const_k
 
-    def attack(self, inp):
+    def attack_with_saliency(self, inp, saliency):
+        return self.attack(inp, saliency)
+
+    def attack(self, inp, saliency=None):
         inp_org = inp.clone()
-        batch_size, n_chs, img_height, img_width = inp.shape
+        batch_size, n_chs, height, width = inp.shape
 
         prev = inp.clone()
         delta = torch.zeros_like(inp)
         ind_org = self.model(Variable(inp)).max(1)[1].data
+
+        if saliency is None:
+            new_inp = Variable(inp, requires_grad=True)
+            output = self.model(new_inp)
+            out_loss = F.cross_entropy(output, output.max(1)[1])
+            saliency, = torch.autograd.grad(out_loss, new_inp)
+            saliency = saliency.data
+
+        saliency = saliency.view(batch_size, n_chs, -1)
+        topk_idx = saliency.abs().sort(dim=2, descending=True)[1]
+        topk_idx = topk_idx.cpu().numpy()
+
+        chs_shift = np.arange(n_chs) * (height * width)
+        chs_shift = np.tile(chs_shift, (batch_size, 1))
+        bsz_shift = np.arange(batch_size) * (n_chs * height * width)
+        idx_shift = chs_shift + np.expand_dims(bsz_shift, 1)
+        topk_idx = topk_idx + np.expand_dims(idx_shift, 2)
+        topk_idx = topk_idx[:, :, :self.const_k].ravel()
+        topk_idx = torch.LongTensor(topk_idx).cuda()
 
         step_size = self.epsilon / self.n_iterations
         stopped = [False for _ in range(batch_size)]
@@ -152,8 +181,9 @@ class GhorbaniAttackFast:
                 out_loss, new_inp, create_graph=True)
             inp_grad = inp_grad.view(batch_size, n_chs, -1)
 
-            topk = inp_grad.abs().sort(dim=2, descending=True)[0]
-            topk = topk[:, :, :1000].sum()
+            inp_grad = inp_grad.abs().view(inp_grad.numel())
+            topk = inp_grad[topk_idx].sum()
+
             delta, = torch.autograd.grad(-topk, new_inp)
             delta = delta.sign().data
 
@@ -174,70 +204,6 @@ class GhorbaniAttackFast:
         ind_new = self.model(Variable(inp)).max(1)[1].data
         assert (ind_org == ind_new).all()
         return inp, inp - inp_org
-
-
-class GhorbaniAttack:
-
-    def __init__(self, model,
-                 lambda_t1=1, lambda_t2=1,
-                 lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10, optim='sgd', lr=1e-2,
-                 epsilon=2 / 255):
-        self.model = model
-        self.lambda_t1 = lambda_t1
-        self.lambda_t2 = lambda_t2
-        self.lambda_l1 = lambda_l1
-        self.lambda_l2 = lambda_l2
-        self.n_iterations = n_iterations
-        self.optim = optim.lower()
-        self.lr = lr
-        self.epsilon = epsilon
-
-    def attack(self, inp):
-        inp_org = inp.cpu().numpy()
-        inp = Variable(inp.cuda(), requires_grad=True)
-        ind_org = self.model(inp).max(1)[1].data.cpu().numpy()
-
-        batch_size, n_chs, img_height, img_width = inp.shape
-        step_size = self.epsilon / self.n_iterations
-        accu_perturb = np.zeros_like(inp_org)
-        prev_perturb = np.zeros_like(inp_org)
-        stopped = [False for _ in range(batch_size)]
-        for i in range(self.n_iterations):
-            inp = np.clip(inp_org + accu_perturb, 0, 1)
-            inp = Variable(torch.from_numpy(inp).cuda(), requires_grad=True)
-            output = self.model(inp)
-            ind = output.max(1)[1]
-            ind_new = ind.data.cpu().numpy()
-            for batch_idx in range(batch_size):
-                if ind_new[batch_idx] != ind_org[batch_idx]:
-                    accu_perturb[batch_idx] = prev_perturb[batch_idx]
-                    stopped[batch_idx] = True
-
-            out_loss = F.cross_entropy(output, ind)
-            inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
-            inp_grad = inp_grad.view(batch_size, n_chs, -1)
-
-            topk = inp_grad.abs().sort(dim=2, descending=True)[0]
-            topk = topk[:, :, :1000].sum()
-            delta, = torch.autograd.grad(-topk, inp)
-            delta = delta.sign().data.cpu().numpy()
-
-            for batch_idx in range(batch_size):
-                if stopped[batch_idx]:
-                    delta[batch_idx] = 0
-
-            prev_perturb = accu_perturb.copy()
-            accu_perturb = accu_perturb + step_size * delta
-
-        perturbed = np.clip(inp_org + accu_perturb, 0, 1)
-        perturbed = torch.FloatTensor(perturbed)
-        accu_perturb = torch.FloatTensor(accu_perturb)
-        # final check that all predictions remain
-        inp = Variable(perturbed.cuda())
-        ind_new = self.model(inp).max(1)[1].data.cpu().numpy()
-        assert (ind_org == ind_new).all()
-        return perturbed, accu_perturb
 
 
 def saliency_correlation(s1, s2, image):
@@ -365,9 +331,9 @@ def saliency_histogram(model, raw_images):
     return results
 
 
-def attack_test(model, raw_images):
+def attack_with_saliency_test(model, raw_images):
     attackers = [
-        (GhorbaniAttackFast(
+        (GhorbaniAttack(
             model,
             lambda_t1=0,
             lambda_t2=1,
@@ -376,7 +342,58 @@ def attack_test(model, raw_images):
             n_iterations=30,
             optim='sgd',
             lr=1e-2,
-            epsilon=EPSILON), 'gho'),
+            epsilon=EPSILON,
+            const_k=GHO_K), 'gho'),
+        # (FGSM(model, epsilon=EPSILON, n_iterations=10), 'fgsm'),
+        # (NoiseAttack(epsilon=EPSILON), 'srnd'),
+        (ScaledNoiseAttack(epsilon=EPSILON), 'rnd'),
+    ]
+
+    images = torch.stack([transf(x) for x in raw_images]).cuda()
+
+    '''run saliency methods'''
+    results = []
+    batch_size = images.shape[0]
+    for method_name, kwargs in configs:
+        explainer = get_explainer(model, method_name, kwargs)
+        inputs = Variable(images.clone().cuda(), requires_grad=True)
+        saliency_1 = explainer.explain(inputs)
+
+        for atk, attack_name in attackers:
+            perturbed, delta = atk.attack_with_saliency(images.clone(),
+                                                        saliency_1.clone())
+            # unrestricted perturbation
+            inputs = Variable(perturbed.cuda(), requires_grad=True)
+            saliency_2 = explainer.explain(inputs)
+
+            scores = [
+                saliency_correlation(saliency_1, saliency_2, inputs.data),
+                *channel_correlation(saliency_1, saliency_2, inputs.data),
+            ]
+            scores = list(map(list, zip(*scores)))
+
+            for i in range(batch_size):
+                results.append([
+                    method_name,
+                    attack_name,
+                ] + scores[i])
+
+    return results
+
+
+def attack_test(model, raw_images):
+    attackers = [
+        (GhorbaniAttack(
+            model,
+            lambda_t1=0,
+            lambda_t2=1,
+            lambda_l1=0,
+            lambda_l2=0,
+            n_iterations=30,
+            optim='sgd',
+            lr=1e-2,
+            epsilon=EPSILON,
+            const_k=GHO_K), 'gho'),
         # (FGSM(model, epsilon=EPSILON, n_iterations=10), 'fgsm'),
         # (NoiseAttack(epsilon=EPSILON), 'srnd'),
         (ScaledNoiseAttack(epsilon=EPSILON), 'rnd'),
@@ -451,7 +468,7 @@ def setup_imagenet(batch_size):
     image_batches = map(batch_loader, image_files)
     n_batches = len(image_files)
     print('image path loaded', n_batches)
-    
+
     model = utils.load_model('resnet50')
     model.eval()
     model.cuda()
@@ -489,6 +506,8 @@ def setup_cifar10(batch_size):
 
 # image_batches, n_batches, model, transf = setup_imagenet(16)
 image_batches, n_batches, model, transf = setup_cifar10(16)
+EPSILON = 2 / 255
+GHO_K = 400
 
 
 def run_attack_short():
@@ -497,7 +516,8 @@ def run_attack_short():
     for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
         if batch_idx >= n_batches:
             break
-        results += attack_test(model, batch)
+        # results += attack_test(model, batch)
+        results += attack_with_saliency_test(model, batch)
     n_scores = len(results[0]) - 2  # number of different scores
     columns = (
         ['method', 'attack'] +
