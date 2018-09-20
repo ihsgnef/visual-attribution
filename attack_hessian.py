@@ -1,4 +1,3 @@
-import json
 import glob
 import numpy as np
 import pandas as pd
@@ -20,32 +19,38 @@ from preprocess import get_preprocess
 configs = [
     ['sparse 1',
      {
-        'lambda_t1': 1,
-        'lambda_t2': 1,
-        'lambda_l1': 100,
-        'lambda_l2': 1e4,
-        'n_iterations': 10,
-        'optim': 'sgd',
-        'lr': 0.1,
+         'lambda_t1': 1,
+         'lambda_t2': 1,
+         'lambda_l1': 100,
+         'lambda_l2': 1e4,
+         'n_iterations': 10,
+         'optim': 'sgd',
+         'lr': 0.1,
+         'times_input': False,
      }],
     ['sparse 2',
      {
-        'lambda_t1': 0,
-        'lambda_t2': 1,
-        'lambda_l1': 100,
-        'lambda_l2': 1e4,
-        'n_iterations': 10,
-        'optim': 'sgd',
-        'lr': 0.1,
+         'lambda_t1': 0,
+         'lambda_t2': 1,
+         'lambda_l1': 100,
+         'lambda_l2': 1e4,
+         'n_iterations': 10,
+         'optim': 'sgd',
+         'lr': 0.1,
+         'times_input': False,
      }],
     ['vat 1',
-     {'n_iterations': 1,
-      'xi': 1e-6,
+     {
+         'n_iterations': 1,
+         'xi': 1e-6,
+         'times_input': False,
       }],
-    # ['vanilla_grad', None],
-    # ['grad_x_input', None],
-    # ['smooth_grad', None],
-    # ['integrate_grad', None],
+    ['vanilla_grad', None],
+    ['vanilla_grad_new', None],
+    ['grad_x_input', None],
+    ['grad_x_input_new', None],
+    ['smooth_grad', None],
+    ['integrate_grad', None],
 ]
 
 
@@ -137,10 +142,21 @@ class GhorbaniAttack:
         self.optim = optim.lower()
         self.lr = lr
         self.epsilon = epsilon
-        self.const_k = const_k
+        self.const_k = int(const_k)
 
     def attack_with_saliency(self, inp, saliency):
         return self.attack(inp, saliency)
+
+    def _backprop(self, inp, ind):
+        zero_grad(self.model)
+        output = self.model(inp)
+        # if ind is None:
+        ind = output.data.max(1)[1]
+        grad_out = output.data.clone()
+        grad_out.fill_(0.0)
+        grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
+        output.backward(grad_out, create_graph=True)
+        return inp.grad
 
     def attack(self, inp, saliency=None):
         inp_org = inp.clone()
@@ -176,10 +192,11 @@ class GhorbaniAttack:
             new_inp = Variable(inp, requires_grad=True)
             output = self.model(new_inp)
             ind = output.max(1)[1]
+
             out_loss = F.cross_entropy(output, ind)
-            inp_grad, = torch.autograd.grad(
-                out_loss, new_inp, create_graph=True)
-            inp_grad = inp_grad.view(batch_size, n_chs, -1)
+            inp_grad, = torch.autograd.grad(out_loss, new_inp,
+                                            create_graph=True)
+            # inp_grad = self._backprop(new_inp, ind)
 
             inp_grad = inp_grad.abs().view(inp_grad.numel())
             topk = inp_grad[topk_idx].sum()
@@ -222,10 +239,10 @@ def saliency_correlation(s1, s2, image):
 
 
 def channel_correlation(s1, s2, image):
-    s1 = (s1 * image).abs()
-    s2 = (s2 * image).abs()
     assert s1.shape == s2.shape
     assert s1.ndimension() == 4  # batch, 3, height, width
+    s1 = s1.abs()
+    s2 = s2.abs()
     batch_size = s1.shape[0]
     s1 = s1.cpu().numpy().reshape(batch_size, 3, -1)
     s2 = s2.cpu().numpy().reshape(batch_size, 3, -1)
@@ -275,14 +292,15 @@ def aggregate(saliency, image):
     image = image.cpu()
     # return binit(saliency)
     # return viz.VisualizeImageGrayscale(saliency)
-    # return saliency.abs().sum(dim=1)
-    # # return saliency.max(dim=1)[0]
-    # # return saliency.abs().max(dim=1)[0]
-    # # return saliency.sum(dim=1)
-    # # return (saliency * image).sum(dim=1)
-    return (saliency * image).abs().sum(dim=1)
-    # # return (saliency * image).abs().max(dim=1)[0]
-    # # return (saliency * image).max(dim=1)[0]
+    return saliency.abs().sum(dim=1)
+    # return (saliency * image).abs().sum(dim=1)
+    # return saliency.max(dim=1)[0]
+    # return saliency.abs().max(dim=1)[0]
+    # return saliency.sum(dim=1)
+    # return saliency.sum(dim=1).abs()
+    # return (saliency * image).sum(dim=1)
+    # return (saliency * image).abs().max(dim=1)[0]
+    # return (saliency * image).max(dim=1)[0]
 
 
 def perturb(image, delta, mask, flip=False):
@@ -331,7 +349,7 @@ def saliency_histogram(model, raw_images):
     return results
 
 
-def attack_with_saliency_test(model, raw_images):
+def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
     attackers = [
         (GhorbaniAttack(
             model,
@@ -353,18 +371,22 @@ def attack_with_saliency_test(model, raw_images):
 
     '''run saliency methods'''
     results = []
+    saliency_maps = []
     batch_size = images.shape[0]
     for method_name, kwargs in configs:
         explainer = get_explainer(model, method_name, kwargs)
         inputs = Variable(images.clone().cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs)
+        map_1 = saliency_1.cpu().numpy()
 
         for atk, attack_name in attackers:
             perturbed, delta = atk.attack_with_saliency(images.clone(),
                                                         saliency_1.clone())
+            ptb_np = perturbed.cpu().numpy()
             # unrestricted perturbation
             inputs = Variable(perturbed.cuda(), requires_grad=True)
             saliency_2 = explainer.explain(inputs)
+            map_2 = saliency_2.cpu().numpy()
 
             scores = [
                 saliency_correlation(saliency_1, saliency_2, inputs.data),
@@ -373,15 +395,18 @@ def attack_with_saliency_test(model, raw_images):
             scores = list(map(list, zip(*scores)))
 
             for i in range(batch_size):
-                results.append([
-                    method_name,
-                    attack_name,
-                ] + scores[i])
+                results.append([method_name, attack_name] + scores[i])
+            if get_saliency_maps:
+                saliency_maps.append([method_name, attack_name, map_1[0],
+                                      map_2[0], ptb_np[0]])
 
-    return results
+    if get_saliency_maps:
+        return results, saliency_maps
+    else:
+        return results
 
 
-def attack_test(model, raw_images):
+def attack_test(model, raw_images, get_saliency_maps=False):
     attackers = [
         (GhorbaniAttack(
             model,
@@ -404,20 +429,25 @@ def attack_test(model, raw_images):
     images = torch.stack([transf(x) for x in raw_images]).cuda()
     for atk, attack_name in attackers:
         perturbed, delta = atk.attack(images.clone())
-        attacks.append((perturbed, delta, attack_name))
+        ptb_np = perturbed.cpu().numpy()
+        attacks.append((perturbed, delta, attack_name, ptb_np))
 
     '''run saliency methods'''
     results = []
+    saliency_maps = []
     batch_size = images.shape[0]
     for method_name, kwargs in configs:
         explainer = get_explainer(model, method_name, kwargs)
         inputs = Variable(images.clone().cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs)
-        for perturbed, delta, attack_name in attacks:
+        map_1 = saliency_1.cpu().numpy()
+
+        for perturbed, delta, attack_name, ptb_np in attacks:
             # unrestricted perturbation
             inputs = perturbed.clone()
             inputs = Variable(inputs.cuda(), requires_grad=True)
             saliency_2 = explainer.explain(inputs)
+            map_2 = saliency_2.cpu().numpy()
 
             # # only perturb highlighted region
             # inputs = perturb(images, delta, saliency_1)
@@ -447,11 +477,15 @@ def attack_test(model, raw_images):
             scores = list(map(list, zip(*scores)))
 
             for i in range(batch_size):
-                results.append([
-                    method_name,
-                    attack_name,
-                ] + scores[i])
-    return results
+                results.append([method_name, attack_name] + scores[i])
+            if get_saliency_maps:
+                saliency_maps.append([method_name, attack_name, map_1[0],
+                                      map_2[0], ptb_np[0]])
+
+    if get_saliency_maps:
+        return results, saliency_maps
+    else:
+        return results
 
 
 def setup_imagenet(batch_size):
@@ -504,41 +538,54 @@ def setup_cifar10(batch_size):
     return batches, n_batches, model, null
 
 
-# image_batches, n_batches, model, transf = setup_imagenet(16)
-image_batches, n_batches, model, transf = setup_cifar10(16)
+image_batches, n_batches, model, transf = setup_imagenet(16)
 EPSILON = 2 / 255
-GHO_K = 400
+GHO_K = 1e4
+# image_batches, n_batches, model, transf = setup_cifar10(16)
+# EPSILON = 16 / 255
+# GHO_K = 400
 
 
 def run_attack_short():
     results = []
+    saliency_maps = []
     n_batches = 3
-    for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
+    for batch_idx, batch in enumerate(image_batches):
         if batch_idx >= n_batches:
             break
-        # results += attack_test(model, batch)
-        results += attack_with_saliency_test(model, batch)
+        scores, maps = attack_test(model, batch, get_saliency_maps=True)
+        # scores, maps = attack_with_saliency_test(model, batch,
+        #                                          get_saliency_maps=True)
+        results += scores
+        saliency_maps += maps
     n_scores = len(results[0]) - 2  # number of different scores
     columns = (
         ['method', 'attack'] +
         ['score_{}'.format(i) for i in range(n_scores)]
     )
     df = pd.DataFrame(results, columns=columns)
-    with open('output/results.812.json') as f:
-        df = df.append(pd.DataFrame(json.load(f)), ignore_index=True)
     print(df.groupby(['attack', 'method']).mean())
+
+    # read previous results
+    # with open('output/results.812.json') as f:
+    #     df = df.append(pd.DataFrame(json.load(f)), ignore_index=True)
+
+    # df2 = pd.DataFrame(saliency_maps, columns=['method', 'attack', 'map_1',
+    #                                            'map_2', 'perturbed'])
+    # print(df2)
+    # with open('attack_short.json', 'w') as f:
+    #     f.write(df2.to_json())
 
 
 def run_attack_long():
-    # indices = batch_indices[:100]
     results = []
-    n_scores = 4  # len(results[0]) - 2  # number of different scores
-    columns = (
-        ['method', 'attack'] +
-        ['score_{}'.format(i) for i in range(n_scores)]
-    )
 
     def check():
+        n_scores = len(results[0]) - 2  # number of different scores
+        columns = (
+            ['method', 'attack'] +
+            ['score_{}'.format(i) for i in range(n_scores)]
+        )
         df = pd.DataFrame(results, columns=columns)
         with open('output/results.{}.json'.format(batch_idx), 'w') as f:
             f.write(df.to_json())

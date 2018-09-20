@@ -1,8 +1,10 @@
 import numpy as np
 from torch.autograd import Variable, Function
+import torch.nn.functional as F
 import torch
 import types
 from explainer import sparse as sparse
+
 
 class VanillaGradExplainer(object):
     def __init__(self, model):
@@ -10,13 +12,35 @@ class VanillaGradExplainer(object):
 
     def _backprop(self, inp, ind):
         output = self.model(inp)
-        #if ind is None:
+        # if ind is None:
         ind = output.data.max(1)[1]
         grad_out = output.data.clone()
         grad_out.fill_(0.0)
         grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
         output.backward(grad_out)
         return inp.grad.data
+
+    # def _backprop(self, inp, ind):
+    #     output = self.model(inp)
+    #     ind = output.max(1)[1]
+    #     out_loss = F.cross_entropy(output, ind)
+    #     inp_grad, = torch.autograd.grad(out_loss, inp)
+    #     return inp_grad.data
+
+    def explain(self, inp, ind=None):
+        return self._backprop(inp, ind)
+
+
+class VanillaGradNewExplainer(object):
+    def __init__(self, model):
+        self.model = model
+
+    def _backprop(self, inp, ind):
+        output = self.model(inp)
+        ind = output.max(1)[1]
+        out_loss = F.cross_entropy(output, ind)
+        inp_grad, = torch.autograd.grad(out_loss, inp)
+        return inp_grad.data
 
     def explain(self, inp, ind=None):
         return self._backprop(inp, ind)
@@ -25,6 +49,15 @@ class VanillaGradExplainer(object):
 class GradxInputExplainer(VanillaGradExplainer):
     def __init__(self, model):
         super(GradxInputExplainer, self).__init__(model)
+
+    def explain(self, inp, ind=None):
+        grad = self._backprop(inp, ind)
+        return inp.data * grad
+
+
+class GradxInputNewExplainer(VanillaGradNewExplainer):
+    def __init__(self, model):
+        super(GradxInputNewExplainer, self).__init__(model)
 
     def explain(self, inp, ind=None):
         grad = self._backprop(inp, ind)

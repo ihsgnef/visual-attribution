@@ -1,14 +1,26 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 from collections import defaultdict
+
+
+def zero_grad(x):
+    if isinstance(x, Variable):
+        if x.grad is not None:
+            x.grad.data.zero_()
+    elif isinstance(x, torch.nn.Module):
+        for p in x.parameters():
+                if p.grad is not None:
+                    p.grad.data.zero_()
 
 
 class SparseExplainer(object):
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10, optim='sgd', lr=0.1):
+                 n_iterations=10, optim='sgd', lr=0.1,
+                 times_input=False):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -17,11 +29,27 @@ class SparseExplainer(object):
         self.n_iterations = n_iterations
         self.optim = optim.lower()
         self.lr = lr
+        self.times_input = times_input
+
+    def _backprop(self, inp, ind):
+        zero_grad(self.model)
+        output = self.model(inp)
+        # if ind is None:
+        ind = output.data.max(1)[1]
+        grad_out = output.data.clone()
+        grad_out.fill_(0.0)
+        grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
+        output.backward(grad_out, create_graph=True)
+        return inp.grad
 
     def explain(self, inp, ind=None, return_loss=False):
         batch_size, n_chs, img_height, img_width = inp.shape
         img_size = img_height * img_width
         delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
+        # output = self.model(inp)
+        # out_loss = F.cross_entropy(output, output.max(1)[1])
+        # delta = torch.autograd.grad(out_loss, inp)[0].data
+
         delta = nn.Parameter(delta, requires_grad=True)
 
         if self.optim == 'sgd':
@@ -35,9 +63,13 @@ class SparseExplainer(object):
             # if ind is None:
             ind = output.max(1)[1]
             # TODO, find a way to not recalculate grad each time
+
             out_loss = F.cross_entropy(output, ind)
             inp_grad, = torch.autograd.grad(out_loss, inp, create_graph=True)
+            # inp_grad = self._backprop(inp, ind)
+
             inp_grad = inp_grad.view((batch_size, n_chs, img_size))
+
             hessian_delta_vp, = torch.autograd.grad(
                     inp_grad.dot(delta).sum(), inp, create_graph=True)
             hessian_delta_vp = hessian_delta_vp.view(
@@ -69,7 +101,9 @@ class SparseExplainer(object):
             loss.backward()
             optimizer.step()
 
-        delta = delta.view((batch_size, n_chs, img_height, img_width))
+        delta = delta.view((batch_size, n_chs, img_height, img_width)).data
+        if self.times_input:
+            delta *= inp.data
         if return_loss:
-            return delta.data, loss_history
-        return delta.data
+            return delta, loss_history
+        return delta

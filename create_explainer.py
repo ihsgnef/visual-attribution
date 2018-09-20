@@ -12,7 +12,9 @@ from explainer import vat
 def get_explainer(model, name, extra_args):
     methods = {
         'vanilla_grad': bp.VanillaGradExplainer,
+        'vanilla_grad_new': bp.VanillaGradNewExplainer,
         'grad_x_input': bp.GradxInputExplainer,
+        'grad_x_input_new': bp.GradxInputNewExplainer,
         'saliency': bp.SaliencyExplainer,
         'integrate_grad': bp.IntegrateGradExplainer,
         'deconv': bp.DeconvExplainer,
