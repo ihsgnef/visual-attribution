@@ -43,13 +43,13 @@ class SparseExplainer(object):
         return inp.grad
 
     def explain(self, inp, ind=None, return_loss=False):
-        batch_size, n_chs, img_height, img_width = inp.shape
-        img_size = img_height * img_width
-        delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
-        # output = self.model(inp)
-        # out_loss = F.cross_entropy(output, output.max(1)[1])
-        # delta = torch.autograd.grad(out_loss, inp)[0].data
-
+        batch_size, n_chs, height, width = inp.shape
+        img_size = height * width
+        # delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
+        output = self.model(inp)
+        out_loss = F.cross_entropy(output, output.max(1)[1])
+        delta = torch.autograd.grad(out_loss, inp)[0].data
+        delta = delta.view(batch_size, n_chs, img_size)
         delta = nn.Parameter(delta, requires_grad=True)
 
         if self.optim == 'sgd':
@@ -101,7 +101,7 @@ class SparseExplainer(object):
             loss.backward()
             optimizer.step()
 
-        delta = delta.view((batch_size, n_chs, img_height, img_width)).data
+        delta = delta.view((batch_size, n_chs, height, width)).data
         if self.times_input:
             delta *= inp.data
         if return_loss:

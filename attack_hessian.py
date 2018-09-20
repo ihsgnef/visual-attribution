@@ -1,4 +1,5 @@
 import glob
+import pickle
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -15,43 +16,7 @@ import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 
-
-configs = [
-    ['sparse 1',
-     {
-         'lambda_t1': 1,
-         'lambda_t2': 1,
-         'lambda_l1': 100,
-         'lambda_l2': 1e4,
-         'n_iterations': 10,
-         'optim': 'sgd',
-         'lr': 0.1,
-         'times_input': False,
-     }],
-    ['sparse 2',
-     {
-         'lambda_t1': 0,
-         'lambda_t2': 1,
-         'lambda_l1': 100,
-         'lambda_l2': 1e4,
-         'n_iterations': 10,
-         'optim': 'sgd',
-         'lr': 0.1,
-         'times_input': False,
-     }],
-    ['vat 1',
-     {
-         'n_iterations': 1,
-         'xi': 1e-6,
-         'times_input': False,
-      }],
-    ['vanilla_grad', None],
-    ['vanilla_grad_new', None],
-    ['grad_x_input', None],
-    ['grad_x_input_new', None],
-    ['smooth_grad', None],
-    ['integrate_grad', None],
-]
+import matplotlib.pyplot as plt
 
 
 def zero_grad(x):
@@ -76,6 +41,24 @@ class NoiseAttack:
         noise = 2 * np.random.randint(2, size=inp.shape) - 1
         noise = np.sign(noise) * self.epsilon
         perturbed = np.clip(inp.cpu().numpy() + noise, 0, 1)
+        perturbed = torch.FloatTensor(perturbed)
+        noise = torch.FloatTensor(noise)
+        return perturbed, noise
+
+
+class ScaledNoiseAttack:
+
+    def __init__(self, epsilon):
+        self.epsilon = epsilon
+
+    def attack_with_saliency(self, inp, saliency):
+        return self.attack(inp)
+
+    def attack(self, inp):
+        inp = inp.cpu().numpy()
+        noise = 2 * np.random.randint(2, size=inp.shape) - 1
+        noise = np.sign(noise) * self.epsilon
+        perturbed = np.clip(inp + noise * inp, 0, 1)
         perturbed = torch.FloatTensor(perturbed)
         noise = torch.FloatTensor(noise)
         return perturbed, noise
@@ -106,24 +89,6 @@ class FGSM:
             delta = inp_grad.sign().data
             inp = torch.clamp(inp + step_size * delta, 0, 1)
         return inp, inp - inp_org
-
-
-class ScaledNoiseAttack:
-
-    def __init__(self, epsilon):
-        self.epsilon = epsilon
-
-    def attack_with_saliency(self, inp, saliency):
-        return self.attack(inp)
-
-    def attack(self, inp):
-        inp = inp.cpu().numpy()
-        noise = 2 * np.random.randint(2, size=inp.shape) - 1
-        noise = np.sign(noise) * self.epsilon
-        perturbed = np.clip(inp + noise * inp, 0, 1)
-        perturbed = torch.FloatTensor(perturbed)
-        noise = torch.FloatTensor(noise)
-        return perturbed, noise
 
 
 class GhorbaniAttack:
@@ -331,8 +296,8 @@ def perturb(image, delta, mask, flip=False):
 
 def saliency_histogram(model, raw_images):
     results = []
-    for method_name, kwargs in configs:
-        explainer = get_explainer(model, method_name, kwargs)
+    for mth_name, kwargs in configs:
+        explainer = get_explainer(model, mth_name, kwargs)
         batch_size = len(raw_images)
         images = torch.stack([transf(x) for x in raw_images]).cuda()
         batch_size, n_chs, height, width = images.shape
@@ -343,43 +308,26 @@ def saliency_histogram(model, raw_images):
         for i in range(batch_size):
             for j, chn in enumerate(['R', 'G', 'B']):
                 for v in saliency[i][j]:
-                    results.append([method_name, chn, v])
+                    results.append([mth_name, chn, v])
             for v in saliency[i].sum(1):
-                results.append([method_name, 'sum', v])
+                results.append([mth_name, 'sum', v])
     return results
 
 
 def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
-    attackers = [
-        (GhorbaniAttack(
-            model,
-            lambda_t1=0,
-            lambda_t2=1,
-            lambda_l1=0,
-            lambda_l2=0,
-            n_iterations=30,
-            optim='sgd',
-            lr=1e-2,
-            epsilon=EPSILON,
-            const_k=GHO_K), 'gho'),
-        # (FGSM(model, epsilon=EPSILON, n_iterations=10), 'fgsm'),
-        # (NoiseAttack(epsilon=EPSILON), 'srnd'),
-        (ScaledNoiseAttack(epsilon=EPSILON), 'rnd'),
-    ]
-
     images = torch.stack([transf(x) for x in raw_images]).cuda()
 
     '''run saliency methods'''
     results = []
     saliency_maps = []
     batch_size = images.shape[0]
-    for method_name, kwargs in configs:
-        explainer = get_explainer(model, method_name, kwargs)
+    for mth_name, kwargs in configs:
+        explainer = get_explainer(model, mth_name, kwargs)
         inputs = Variable(images.clone().cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs)
         map_1 = saliency_1.cpu().numpy()
 
-        for atk, attack_name in attackers:
+        for atk_name, atk in attackers:
             perturbed, delta = atk.attack_with_saliency(images.clone(),
                                                         saliency_1.clone())
             ptb_np = perturbed.cpu().numpy()
@@ -395,10 +343,10 @@ def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
             scores = list(map(list, zip(*scores)))
 
             for i in range(batch_size):
-                results.append([method_name, attack_name] + scores[i])
-            if get_saliency_maps:
-                saliency_maps.append([method_name, attack_name, map_1[0],
-                                      map_2[0], ptb_np[0]])
+                results.append([mth_name, atk_name] + scores[i])
+                if get_saliency_maps:
+                    saliency_maps.append([mth_name, atk_name,
+                                          map_1[i], map_2[i], ptb_np[i]])
 
     if get_saliency_maps:
         return results, saliency_maps
@@ -407,42 +355,25 @@ def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
 
 
 def attack_test(model, raw_images, get_saliency_maps=False):
-    attackers = [
-        (GhorbaniAttack(
-            model,
-            lambda_t1=0,
-            lambda_t2=1,
-            lambda_l1=0,
-            lambda_l2=0,
-            n_iterations=30,
-            optim='sgd',
-            lr=1e-2,
-            epsilon=EPSILON,
-            const_k=GHO_K), 'gho'),
-        # (FGSM(model, epsilon=EPSILON, n_iterations=10), 'fgsm'),
-        # (NoiseAttack(epsilon=EPSILON), 'srnd'),
-        (ScaledNoiseAttack(epsilon=EPSILON), 'rnd'),
-    ]
-
     '''construct attacks'''
     attacks = []
     images = torch.stack([transf(x) for x in raw_images]).cuda()
-    for atk, attack_name in attackers:
+    for atk_name, atk in attackers:
         perturbed, delta = atk.attack(images.clone())
         ptb_np = perturbed.cpu().numpy()
-        attacks.append((perturbed, delta, attack_name, ptb_np))
+        attacks.append((atk_name, perturbed, delta, ptb_np))
 
     '''run saliency methods'''
     results = []
     saliency_maps = []
     batch_size = images.shape[0]
-    for method_name, kwargs in configs:
-        explainer = get_explainer(model, method_name, kwargs)
+    for mth_name, kwargs in configs:
+        explainer = get_explainer(model, mth_name, kwargs)
         inputs = Variable(images.clone().cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs)
         map_1 = saliency_1.cpu().numpy()
 
-        for perturbed, delta, attack_name, ptb_np in attacks:
+        for atk_name, perturbed, delta, ptb_np in attacks:
             # unrestricted perturbation
             inputs = perturbed.clone()
             inputs = Variable(inputs.cuda(), requires_grad=True)
@@ -477,10 +408,10 @@ def attack_test(model, raw_images, get_saliency_maps=False):
             scores = list(map(list, zip(*scores)))
 
             for i in range(batch_size):
-                results.append([method_name, attack_name] + scores[i])
-            if get_saliency_maps:
-                saliency_maps.append([method_name, attack_name, map_1[0],
-                                      map_2[0], ptb_np[0]])
+                results.append([mth_name, atk_name] + scores[i])
+                if get_saliency_maps:
+                    saliency_maps.append([mth_name, atk_name,
+                                          map_1[i], map_2[i], ptb_np[i]])
 
     if get_saliency_maps:
         return results, saliency_maps
@@ -544,6 +475,61 @@ GHO_K = 1e4
 # image_batches, n_batches, model, transf = setup_cifar10(16)
 # EPSILON = 16 / 255
 # GHO_K = 400
+TIMES_INPUT = False
+
+
+attackers = [
+    ('gho',
+     GhorbaniAttack(
+        model,
+        lambda_t1=0,
+        lambda_t2=1,
+        lambda_l1=0,
+        lambda_l2=0,
+        n_iterations=30,
+        optim='sgd',
+        lr=1e-2,
+        epsilon=EPSILON,
+        const_k=GHO_K)),
+    # ('fgsm', FGSM(model, epsilon=EPSILON, n_iterations=10)),
+    # ('rnd', NoiseAttack(epsilon=EPSILON)),
+    ('srnd', ScaledNoiseAttack(epsilon=EPSILON)),
+]
+
+
+configs = [
+    ['sparse 1',
+     {
+         'lambda_t1': 1,
+         'lambda_t2': 1,
+         'lambda_l1': 100,
+         'lambda_l2': 1e4,
+         'n_iterations': 10,
+         'optim': 'sgd',
+         'lr': 0.1,
+         'times_input': TIMES_INPUT,
+     }],
+    ['sparse 2',
+     {
+         'lambda_t1': 0,
+         'lambda_t2': 1,
+         'lambda_l1': 100,
+         'lambda_l2': 1e4,
+         'n_iterations': 10,
+         'optim': 'sgd',
+         'lr': 0.1,
+         'times_input': TIMES_INPUT,
+     }],
+    ['vat 1',
+     {
+         'n_iterations': 1,
+         'xi': 1e-6,
+         'times_input': TIMES_INPUT,
+      }],
+    ['vanilla_grad', None],
+    ['smooth_grad', None],
+    ['integrate_grad', None],
+]
 
 
 def run_attack_short():
@@ -553,9 +539,8 @@ def run_attack_short():
     for batch_idx, batch in enumerate(image_batches):
         if batch_idx >= n_batches:
             break
-        scores, maps = attack_test(model, batch, get_saliency_maps=True)
-        # scores, maps = attack_with_saliency_test(model, batch,
-        #                                          get_saliency_maps=True)
+        # scores, maps = attack_test(model, batch)
+        scores, maps = attack_with_saliency_test(model, batch)
         results += scores
         saliency_maps += maps
     n_scores = len(results[0]) - 2  # number of different scores
@@ -618,6 +603,67 @@ def run_histogram():
     df.to_pickle('histogram.pkl')
 
 
+def figure2():
+    batch = next(image_batches)
+    for image_idx, image in enumerate(batch):
+        scores, maps = attack_with_saliency_test(model, [image],
+                                                 get_saliency_maps=True)
+        saliency_maps = dict()
+        for mth, atk, map1, map2, ptb in maps:
+            map1 = np.array(map1)
+            map2 = np.array(map2)
+            ptb = np.array(ptb)
+            saliency_maps[(atk, mth)] = (map1, map2, ptb)
+
+        with open('figure2.pkl', 'wb') as f:
+            pickle.dump(saliency_maps, f)
+
+        methods = [x[0] for x in configs]
+        attacks = [x[0] for x in attackers]
+
+        title_fontsize = 20
+        org = saliency_maps[(attacks[0], methods[0])][2]
+        org = np.array(org).swapaxes(0, 2).swapaxes(0, 1)
+        org = np.uint8(org * 255)
+
+        rows = len(attacks) + 1
+        cols = len(methods) + 1
+        f, ax = plt.subplots(rows, cols,
+                             figsize=(4 * cols, 4 * rows))
+        ax[0, 0].imshow(org)
+        ax[0, 0].axis('off')
+        ax[0, 0].set_title('input', fontsize=title_fontsize)
+        # ax[0, 0].text(x=0, y=0,
+        #               s="original",
+        #               size=title_fontsize,
+        #               rotation='vertical',
+        #               horizontalalignment='center',
+        #               verticalalignment='center')
+        for j, mth in enumerate(methods):
+            map1 = saliency_maps[(attacks[0], mth)][0]
+            map1 = viz.VisualizeImageGrayscale(
+                torch.FloatTensor(map1).unsqueeze(0))
+            map1 = map1.squeeze(0).numpy()
+            ax[0, j + 1].imshow(map1, cmap='gray')
+            ax[0, j + 1].axis('off')
+            ax[0, j + 1].set_title(mth, fontsize=title_fontsize)
+        for i, atk in enumerate(attacks):
+            ptb = saliency_maps[(atk, methods[0])][2]
+            ptb = np.array(ptb).swapaxes(0, 2).swapaxes(0, 1)
+            ptb = np.uint8(ptb * 255)
+            ax[i + 1, 0].imshow(ptb)
+            ax[i + 1, 0].axis('off')
+            ax[i + 1, 0].set_title(atk, rotation='vertical', x=-0.1, y=0.5,
+                                   fontsize=title_fontsize)
+            for j, mth in enumerate(methods):
+                map1, map2, ptb = saliency_maps[(atk, mth)]
+                map2 = viz.VisualizeImageGrayscale(
+                    torch.FloatTensor(map2).unsqueeze(0))
+                map2 = map2.squeeze(0).numpy()
+                ax[i + 1, j + 1].imshow(map2, cmap='gray')
+                ax[i + 1, j + 1].axis('off')
+        f.savefig('figure2_{}.pdf'.format(image_idx))
+
+
 if __name__ == '__main__':
-    run_attack_short()
-    # run_histogram()
+    figure2()
