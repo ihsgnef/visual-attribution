@@ -12,9 +12,7 @@ from explainer import vat
 def get_explainer(model, name, extra_args):
     methods = {
         'vanilla_grad': bp.VanillaGradExplainer,
-        'vanilla_grad_new': bp.VanillaGradNewExplainer,
         'grad_x_input': bp.GradxInputExplainer,
-        'grad_x_input_new': bp.GradxInputNewExplainer,
         'saliency': bp.SaliencyExplainer,
         'integrate_grad': bp.IntegrateGradExplainer,
         'deconv': bp.DeconvExplainer,
@@ -28,6 +26,7 @@ def get_explainer(model, name, extra_args):
         'contrastive_excitation_backprop': ebp.ContrastiveExcitationBackpropExplainer,
         'real_time_saliency': rt.RealTimeSaliencyExplainer,
         'sparse': sparse.SparseExplainer,
+        'robust_sparse': sparse.RobustSparseExplainer,
         'sparse_integrate_grad': bp.SparseIntegrateGradExplainer,
         'sparse_guided_backprop': bp.SparseGuidedBackpropExplainer,
         'vat': vat.VATExplainer,

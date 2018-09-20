@@ -10,36 +10,24 @@ class VanillaGradExplainer(object):
     def __init__(self, model):
         self.model = model
 
-    def _backprop(self, inp, ind):
-        output = self.model(inp)
-        # if ind is None:
-        ind = output.data.max(1)[1]
-        grad_out = output.data.clone()
-        grad_out.fill_(0.0)
-        grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
-        output.backward(grad_out)
-        return inp.grad.data
-
     # def _backprop(self, inp, ind):
+    #     '''inefficient original implementation'''
     #     output = self.model(inp)
-    #     ind = output.max(1)[1]
-    #     out_loss = F.cross_entropy(output, ind)
-    #     inp_grad, = torch.autograd.grad(out_loss, inp)
-    #     return inp_grad.data
-
-    def explain(self, inp, ind=None):
-        return self._backprop(inp, ind)
-
-
-class VanillaGradNewExplainer(object):
-    def __init__(self, model):
-        self.model = model
+    #     # if ind is None:
+    #     ind = output.data.max(1)[1]
+    #     grad_out = output.data.clone()
+    #     grad_out.fill_(0.0)
+    #     grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
+    #     output.backward(grad_out)
+    #     return inp.grad.data
 
     def _backprop(self, inp, ind):
+        '''backprop from 0-1 instead of cross entropy'''
         output = self.model(inp)
-        ind = output.max(1)[1]
-        out_loss = F.cross_entropy(output, ind)
-        inp_grad, = torch.autograd.grad(out_loss, inp)
+        ind = output.data.max(1)[1]
+        grad_out = torch.zeros_like(output.data)
+        grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
+        inp_grad, = torch.autograd.grad(output, inp, grad_outputs=grad_out)
         return inp_grad.data
 
     def explain(self, inp, ind=None):
@@ -49,15 +37,6 @@ class VanillaGradNewExplainer(object):
 class GradxInputExplainer(VanillaGradExplainer):
     def __init__(self, model):
         super(GradxInputExplainer, self).__init__(model)
-
-    def explain(self, inp, ind=None):
-        grad = self._backprop(inp, ind)
-        return inp.data * grad
-
-
-class GradxInputNewExplainer(VanillaGradNewExplainer):
-    def __init__(self, model):
-        super(GradxInputNewExplainer, self).__init__(model)
 
     def explain(self, inp, ind=None):
         grad = self._backprop(inp, ind)

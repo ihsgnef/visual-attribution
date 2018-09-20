@@ -72,9 +72,11 @@ class FGSM:
         self.n_iterations = n_iterations
 
     def attack_with_saliency(self, inp, saliency):
-        return self.attack(inp)
+        return self.attack(inp, saliency)
 
-    def attack(self, inp):
+    def attack(self, inp, saliency=None):
+        batch_size, n_chs, height, width = inp.shape
+
         inp_org = inp.clone()
         batch_size, n_chs, height, width = inp.shape
         step_size = self.epsilon / self.n_iterations
@@ -91,13 +93,41 @@ class FGSM:
         return inp, inp - inp_org
 
 
+def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
+    assert len(saliency.shape) == 4
+    batch_size, n_chs, height, width = saliency.shape
+    if topk_agg is not None:
+        saliency = topk_agg(saliency)
+
+    if len(saliency.shape) == 4:
+        saliency = saliency.reshape(batch_size, n_chs, -1)
+        topk_mask = np.ones_like(saliency) if flip else np.zeros_like(saliency)
+        topk_idx = np.argsort(-saliency, axis=2)[:, :, :k]
+        for i in range(batch_size):
+            for j in range(n_chs):
+                topk_mask[i, j, topk_idx[i, j]] = 0 if flip else 1
+        topk_mask = topk_mask.reshape(batch_size, n_chs, height, width)
+    elif len(saliency.shape) == 3:
+        saliency = saliency.reshape(batch_size, -1)
+        topk_mask = np.ones_like(saliency) if flip else np.zeros_like(saliency)
+        topk_idx = np.argsort(-saliency, axis=1)[:, :k]
+        for i in range(batch_size):
+            topk_mask[i, topk_idx[i]] = 0 if flip else 1
+        topk_mask = topk_mask.reshape(batch_size, height, width)
+        topk_mask = np.expand_dims(topk_mask, axis=1)
+        topk_mask = np.tile(topk_mask, (1, n_chs, 1, 1))
+    else:
+        print('saliency shape wrong')
+    return topk_mask
+
+
 class GhorbaniAttack:
 
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=1e-2,
-                 epsilon=2 / 255, const_k=1e4):
+                 epsilon=2 / 255, const_k=1e4, topk_agg=None):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -108,6 +138,7 @@ class GhorbaniAttack:
         self.lr = lr
         self.epsilon = epsilon
         self.const_k = int(const_k)
+        self.topk_agg = topk_agg
 
     def attack_with_saliency(self, inp, saliency):
         return self.attack(inp, saliency)
@@ -118,9 +149,11 @@ class GhorbaniAttack:
         # if ind is None:
         ind = output.data.max(1)[1]
         grad_out = output.data.clone()
-        grad_out.fill_(0.0)
+        grad_out = torch.zeros_like(output.data)
         grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
-        output.backward(grad_out, create_graph=True)
+        # output.backward(grad_out, create_graph=True)
+        inp_grad, = torch.autograd.grad(output, inp, grad_outputs=grad_out,
+                                        create_graph=True)
         return inp.grad
 
     def attack(self, inp, saliency=None):
@@ -138,17 +171,11 @@ class GhorbaniAttack:
             saliency, = torch.autograd.grad(out_loss, new_inp)
             saliency = saliency.data
 
-        saliency = saliency.view(batch_size, n_chs, -1)
-        topk_idx = saliency.abs().sort(dim=2, descending=True)[1]
-        topk_idx = topk_idx.cpu().numpy()
-
-        chs_shift = np.arange(n_chs) * (height * width)
-        chs_shift = np.tile(chs_shift, (batch_size, 1))
-        bsz_shift = np.arange(batch_size) * (n_chs * height * width)
-        idx_shift = chs_shift + np.expand_dims(bsz_shift, 1)
-        topk_idx = topk_idx + np.expand_dims(idx_shift, 2)
-        topk_idx = topk_idx[:, :, :self.const_k].ravel()
-        topk_idx = torch.LongTensor(topk_idx).cuda()
+        topk_mask = get_topk_mask(saliency.cpu().numpy(),
+                                  self.const_k,
+                                  topk_agg=self.topk_agg)
+        topk_mask = torch.FloatTensor(topk_mask).cuda()
+        topk_mask = Variable(topk_mask)
 
         step_size = self.epsilon / self.n_iterations
         stopped = [False for _ in range(batch_size)]
@@ -158,14 +185,13 @@ class GhorbaniAttack:
             output = self.model(new_inp)
             ind = output.max(1)[1]
 
+            '''two methods for getting input gradient'''
+            # inp_grad = self._backprop(new_inp, ind)
             out_loss = F.cross_entropy(output, ind)
             inp_grad, = torch.autograd.grad(out_loss, new_inp,
                                             create_graph=True)
-            # inp_grad = self._backprop(new_inp, ind)
 
-            inp_grad = inp_grad.abs().view(inp_grad.numel())
-            topk = inp_grad[topk_idx].sum()
-
+            topk = (inp_grad.abs() * topk_mask).sum()
             delta, = torch.autograd.grad(-topk, new_inp)
             delta = delta.sign().data
 
@@ -254,7 +280,8 @@ def aggregate(saliency, image):
     from 4D (bsz, 3, h, w) to 3D (bsz, h, w)
     '''
     saliency = saliency.cpu()
-    image = image.cpu()
+    if image is not None:
+        image = image.cpu()
     # return binit(saliency)
     # return viz.VisualizeImageGrayscale(saliency)
     return saliency.abs().sum(dim=1)
@@ -481,16 +508,19 @@ TIMES_INPUT = False
 attackers = [
     ('gho',
      GhorbaniAttack(
-        model,
-        lambda_t1=0,
-        lambda_t2=1,
-        lambda_l1=0,
-        lambda_l2=0,
-        n_iterations=30,
-        optim='sgd',
-        lr=1e-2,
-        epsilon=EPSILON,
-        const_k=GHO_K)),
+         model,
+         lambda_t1=0,
+         lambda_t2=1,
+         lambda_l1=0,
+         lambda_l2=0,
+         n_iterations=30,
+         optim='sgd',
+         lr=1e-2,
+         epsilon=EPSILON,
+         const_k=GHO_K,
+         topk_agg=lambda x: np.abs(x),
+         # topk_agg=lambda x: np.abs(x).sum(1),
+     )),
     # ('fgsm', FGSM(model, epsilon=EPSILON, n_iterations=10)),
     # ('rnd', NoiseAttack(epsilon=EPSILON)),
     ('srnd', ScaledNoiseAttack(epsilon=EPSILON)),
@@ -509,9 +539,9 @@ configs = [
          'lr': 0.1,
          'times_input': TIMES_INPUT,
      }],
-    ['sparse 2',
+    ['robust_sparse',
      {
-         'lambda_t1': 0,
+         'lambda_t1': 1,
          'lambda_t2': 1,
          'lambda_l1': 100,
          'lambda_l2': 1e4,
@@ -534,15 +564,13 @@ configs = [
 
 def run_attack_short():
     results = []
-    saliency_maps = []
     n_batches = 3
     for batch_idx, batch in enumerate(image_batches):
         if batch_idx >= n_batches:
             break
-        # scores, maps = attack_test(model, batch)
-        scores, maps = attack_with_saliency_test(model, batch)
+        # scores = attack_test(model, batch)
+        scores = attack_with_saliency_test(model, batch)
         results += scores
-        saliency_maps += maps
     n_scores = len(results[0]) - 2  # number of different scores
     columns = (
         ['method', 'attack'] +
@@ -554,12 +582,6 @@ def run_attack_short():
     # read previous results
     # with open('output/results.812.json') as f:
     #     df = df.append(pd.DataFrame(json.load(f)), ignore_index=True)
-
-    # df2 = pd.DataFrame(saliency_maps, columns=['method', 'attack', 'map_1',
-    #                                            'map_2', 'perturbed'])
-    # print(df2)
-    # with open('attack_short.json', 'w') as f:
-    #     f.write(df2.to_json())
 
 
 def run_attack_long():
@@ -605,7 +627,7 @@ def run_histogram():
 
 def figures():
     batch = next(image_batches)
-    n_images = 4
+    n_images = len(batch)
     all_saliency_maps = []
     for image_idx, image in enumerate(batch[:n_images]):
         scores, maps = attack_with_saliency_test(model, [image],
@@ -655,7 +677,7 @@ def figures():
         image = np.array(image)
         height, width, _ = image.shape
         map1 = map1.ravel()
-        map1 = np.argsort(-map1)[:10000]
+        map1 = np.argsort(-map1)[:GHO_K]
         image = image.reshape(-1, 3)
         image[map1, :] = 255
         image = image.reshape(height, width, 3)
@@ -725,4 +747,4 @@ def figures():
 
 
 if __name__ == '__main__':
-    figures()
+    run_attack_short()
