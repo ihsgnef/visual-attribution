@@ -1,5 +1,4 @@
 import glob
-import pickle
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -17,6 +16,7 @@ from create_explainer import get_explainer
 from preprocess import get_preprocess
 
 import matplotlib.pyplot as plt
+from PIL import Image
 
 
 def zero_grad(x):
@@ -629,6 +629,7 @@ def figures():
     attacks = [x[0] for x in attackers]
 
     title_fontsize = 20
+    resize = transforms.Resize((224, 224))
 
     '''figure 2'''
     rows = len(all_saliency_maps)
@@ -637,6 +638,7 @@ def figures():
     f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
     ax[0, 0].set_title('input', fontsize=title_fontsize)
     for image_idx, image in enumerate(batch[:n_images]):
+        image = resize(image)
         saliency_maps = all_saliency_maps[image_idx]
         ax[image_idx, 0].imshow(image)
         ax[image_idx, 0].axis('off')
@@ -649,6 +651,17 @@ def figures():
     f.tight_layout()
     f.savefig('figure2_multi.pdf')
 
+    def figure3_mask(image, map1):
+        image = np.array(image)
+        height, width, _ = image.shape
+        map1 = map1.ravel()
+        map1 = np.argsort(-map1)[:10000]
+        image = image.reshape(-1, 3)
+        image[map1, :] = 255
+        image = image.reshape(height, width, 3)
+        image = Image.fromarray(image)
+        return image
+
     '''figure 3'''
     # TODO
     rows = len(all_saliency_maps)
@@ -657,12 +670,14 @@ def figures():
     f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
     ax[0, 0].set_title('input', fontsize=title_fontsize)
     for image_idx, image in enumerate(batch[:n_images]):
+        image = resize(image)
         saliency_maps = all_saliency_maps[image_idx]
         ax[image_idx, 0].imshow(image)
         ax[image_idx, 0].axis('off')
         for j, mth in enumerate(methods):
             map1, map2, ptb = saliency_maps[(attacks[0], mth)]
-            ax[image_idx,  j + 1].imshow(map2, cmap='gray')
+            map1 = figure3_mask(image, map1)
+            ax[image_idx,  j + 1].imshow(map1)
             ax[image_idx,  j + 1].axis('off')
             if image_idx == 0:
                 ax[image_idx,  j + 1].set_title(mth, fontsize=title_fontsize)
@@ -671,6 +686,7 @@ def figures():
 
     '''figure 5s'''
     for image_idx, image in enumerate(batch[:n_images]):
+        image = resize(image)
         saliency_maps = all_saliency_maps[image_idx]
 
         rows = len(attacks) + 1
