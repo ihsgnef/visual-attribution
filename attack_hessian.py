@@ -322,7 +322,7 @@ def perturb(image, delta, mask, flip=False):
     return torch.from_numpy(perturbed).cuda()
 
 
-def saliency_histogram(model, raw_images):
+def saliency_histogram(configs, model, raw_images):
     results = []
     for mth_name, kwargs in configs:
         explainer = get_explainer(model, mth_name, kwargs)
@@ -342,7 +342,8 @@ def saliency_histogram(model, raw_images):
     return results
 
 
-def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
+def attack_with_saliency_test(configs, attackers, model, raw_images,
+                              get_saliency_maps=False):
     images = torch.stack([transf(x) for x in raw_images]).cuda()
 
     '''run saliency methods'''
@@ -373,7 +374,7 @@ def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
             for i in range(batch_size):
                 results.append([mth_name, atk_name] + scores[i])
                 if get_saliency_maps:
-                    saliency_maps.append([mth_name, atk_name,
+                    saliency_maps.append([i, mth_name, atk_name,
                                           map_1[i], map_2[i], ptb_np[i]])
 
     if get_saliency_maps:
@@ -382,7 +383,8 @@ def attack_with_saliency_test(model, raw_images, get_saliency_maps=False):
         return results
 
 
-def attack_test(model, raw_images, get_saliency_maps=False):
+def attack_test(configs, attackers, model, raw_images,
+                get_saliency_maps=False):
     '''construct attacks'''
     attacks = []
     images = torch.stack([transf(x) for x in raw_images]).cuda()
@@ -438,7 +440,7 @@ def attack_test(model, raw_images, get_saliency_maps=False):
             for i in range(batch_size):
                 results.append([mth_name, atk_name] + scores[i])
                 if get_saliency_maps:
-                    saliency_maps.append([mth_name, atk_name,
+                    saliency_maps.append([i, mth_name, atk_name,
                                           map_1[i], map_2[i], ptb_np[i]])
 
     if get_saliency_maps:
@@ -499,7 +501,7 @@ def setup_cifar10(batch_size):
 
 image_batches, n_batches, model, transf = setup_imagenet(16)
 EPSILON = 2 / 255
-GHO_K = 1e4
+GHO_K = int(1e4)
 # image_batches, n_batches, model, transf = setup_cifar10(16)
 # EPSILON = 16 / 255
 # GHO_K = 400
@@ -551,7 +553,7 @@ configs = [
          'lr': 0.1,
          'times_input': TIMES_INPUT,
      }],
-    ['vat 1',
+    ['vat',
      {
          'n_iterations': 1,
          'xi': 1e-6,
@@ -569,8 +571,8 @@ def run_attack_short():
     for batch_idx, batch in enumerate(image_batches):
         if batch_idx >= n_batches:
             break
-        # scores = attack_test(model, batch)
-        scores = attack_with_saliency_test(model, batch)
+        # scores = attack_test(configs, attackers, model, batch)
+        scores = attack_with_saliency_test(configs, attackers, model, batch)
         results += scores
     n_scores = len(results[0]) - 2  # number of different scores
     columns = (
@@ -604,7 +606,7 @@ def run_attack_long():
         if batch_idx % 20 == 0 and batch_idx > 0:
             check()
             results = []
-        results += attack_test(model, batch)
+        results += attack_test(configs, attackers, model, batch)
     if len(results) > 0:
         check()
 
@@ -615,7 +617,7 @@ def run_histogram():
     for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
         if batch_idx >= n_batches:
             break
-        results += saliency_histogram(model, batch)
+        results += saliency_histogram(configs, model, batch)
     columns = (
         ['method', 'channel', 'saliency']
     )
@@ -629,15 +631,33 @@ def run_histogram():
     p.save('histogram.pdf')
 
 
+def name_conv(name):
+    name = name.split(' ')[0]
+    conv = {
+        'sparse': 'H1',
+        'robust_sparse': 'H2',
+        'vat': 'VAT',
+        'vanilla_grad': 'Gradient',
+        'smooth_grad': 'SmoothGrad',
+        'integrate_grad': 'IntegratedGrad',
+        'gho': 'Ghorbani',
+        'srnd': 'Random',
+    }
+    return conv[name]
+
+
 def figures():
     batch = next(image_batches)
-    n_images = len(batch)
+    n_images = 3  # len(batch)
     all_saliency_maps = []
+    image_labels = []
     for image_idx, image in enumerate(batch[:n_images]):
-        scores, maps = attack_with_saliency_test(model, [image],
+        scores, maps = attack_with_saliency_test(configs, model, [image],
                                                  get_saliency_maps=True)
+        # TODO
+        image_labels.append('label')
         saliency_maps = dict()
-        for mth, atk, map1, map2, ptb in maps:
+        for batch_idx, mth, atk, map1, map2, ptb in maps:
             map1 = viz.VisualizeImageGrayscale(
                 torch.FloatTensor(np.array(map1)).unsqueeze(0))
             map1 = map1.squeeze(0).numpy()
@@ -648,11 +668,14 @@ def figures():
 
             ptb = np.array(ptb).swapaxes(0, 2).swapaxes(0, 1)
             ptb = np.uint8(ptb * 255)
-            saliency_maps[(atk, mth)] = (map1, map2, ptb)
+            # TODO
+            rr = {'label': 'label', 'pred1': 'pred1', 'pred2': 'pred2',
+                  'map1': map1, 'map2': map2, 'ptb': ptb}
+            saliency_maps[(name_conv(atk), name_conv(mth))] = rr
         all_saliency_maps.append(saliency_maps)
 
-    methods = [x[0] for x in configs]
-    attacks = [x[0] for x in attackers]
+    methods = [name_conv(x[0]) for x in configs]
+    attacks = [name_conv(x[0]) for x in attackers]
 
     title_fontsize = 20
     resize = transforms.Resize((224, 224))
@@ -662,25 +685,26 @@ def figures():
     cols = len(methods) + 1
     print('figure 2 size: {} rows, {} cols'.format(rows, cols))
     f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
-    ax[0, 0].set_title('input', fontsize=title_fontsize)
     for image_idx, image in enumerate(batch[:n_images]):
         image = resize(image)
+        label = image_labels[image_idx]
         saliency_maps = all_saliency_maps[image_idx]
         ax[image_idx, 0].imshow(image)
         ax[image_idx, 0].axis('off')
+        ax[image_idx, 0].set_title(label, fontsize=title_fontsize)
         for j, mth in enumerate(methods):
-            map1, map2, ptb = saliency_maps[(attacks[0], mth)]
+            map1 = saliency_maps[(attacks[0], mth)]['map1']
             ax[image_idx,  j + 1].imshow(map1, cmap='gray')
             ax[image_idx,  j + 1].axis('off')
-            if image_idx == 0:
-                ax[image_idx,  j + 1].set_title(mth, fontsize=title_fontsize)
+            ax[image_idx,  j + 1].set_title(mth, fontsize=title_fontsize)
     f.tight_layout()
-    f.savefig('figure2_multi.pdf')
+    f.savefig('figures/figure2_multi.pdf')
 
     def figure3_mask(image, map1):
         image = np.array(image)
         height, width, _ = image.shape
         map1 = map1.ravel()
+        print(GHO_K, type(GHO_K))
         map1 = np.argsort(-map1)[:GHO_K]
         image = image.reshape(-1, 3)
         image[map1, :] = 255
@@ -697,34 +721,38 @@ def figures():
     ax[0, 0].set_title('input', fontsize=title_fontsize)
     for image_idx, image in enumerate(batch[:n_images]):
         image = resize(image)
+        label = image_labels[image_idx]
         saliency_maps = all_saliency_maps[image_idx]
         ax[image_idx, 0].imshow(image)
         ax[image_idx, 0].axis('off')
+        ax[image_idx,  j + 1].set_title(label, fontsize=title_fontsize)
         for j, mth in enumerate(methods):
-            map1, map2, ptb = saliency_maps[(attacks[0], mth)]
+            map1 = saliency_maps[(attacks[0], mth)]['map1']
             map1 = figure3_mask(image, map1)
+            pred2 = saliency_maps[(attacks[0], mth)]['pred2']
             ax[image_idx,  j + 1].imshow(map1)
             ax[image_idx,  j + 1].axis('off')
-            if image_idx == 0:
-                ax[image_idx,  j + 1].set_title(mth, fontsize=title_fontsize)
+            ax[image_idx,  j + 1].set_title('{}\n{}'.format(mth, pred2),
+                                            fontsize=title_fontsize)
     f.tight_layout()
-    f.savefig('figure3_multi.pdf')
+    f.savefig('figures/figure3_multi.pdf')
 
     '''figure 5s'''
     for image_idx, image in enumerate(batch[:n_images]):
         image = resize(image)
+        label = image_labels[image_idx]
         saliency_maps = all_saliency_maps[image_idx]
 
         rows = len(attacks) + 1
         cols = len(methods) + 1
         print('figure 5[{}] size: {} rows, {} cols'.format(
             image_idx, rows, cols))
-        f, ax = plt.subplots(rows, cols,
-                             figsize=(4 * cols, 4 * rows))
+        f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
 
         ax[0, 0].imshow(image)
         ax[0, 0].axis('off')
-        ax[0, 0].set_title('input', fontsize=title_fontsize)
+        ax[0, 0].set_title(label, fontsize=title_fontsize)
+        # vertical text to the left of the top left image
         # ax[0, 0].text(x=0, y=0,
         #               s="original",
         #               size=title_fontsize,
@@ -732,23 +760,102 @@ def figures():
         #               horizontalalignment='center',
         #               verticalalignment='center')
         for j, mth in enumerate(methods):
-            map1 = saliency_maps[(attacks[0], mth)][0]
+            map1 = saliency_maps[(attacks[0], mth)]['map1']
             ax[0, j + 1].imshow(map1, cmap='gray')
             ax[0, j + 1].axis('off')
             ax[0, j + 1].set_title(mth, fontsize=title_fontsize)
         for i, atk in enumerate(attacks):
-            ptb = saliency_maps[(atk, methods[0])][2]
+            ptb = saliency_maps[(atk, mth)]['ptb']
             ax[i + 1, 0].imshow(ptb)
             ax[i + 1, 0].axis('off')
             ax[i + 1, 0].set_title(atk, rotation='vertical', x=-0.1, y=0.5,
                                    fontsize=title_fontsize)
             for j, mth in enumerate(methods):
-                map1, map2, ptb = saliency_maps[(atk, mth)]
+                map2 = saliency_maps[(atk, mth)]['map2']
                 ax[i + 1, j + 1].imshow(map2, cmap='gray')
                 ax[i + 1, j + 1].axis('off')
         f.tight_layout()
-        f.savefig('figure5_{}.pdf'.format(image_idx))
+        f.savefig('figures/figure5_{}.pdf'.format(image_idx))
+
+
+def figure_1():
+
+    default_config = {
+            'lambda_t1': 1,
+            'lambda_t2': 1,
+            'lambda_l1': 100,
+            'lambda_l2': 1e4,
+            'n_iterations': 10,
+            'optim': 'sgd',
+            'lr': 0.1,
+            'times_input': TIMES_INPUT,
+        }
+
+    l2_configs = []
+    for lambda_l2 in [1, 10, 100, 1e3, 1e4]:
+        config = default_config.copy()
+        config.update({'lambda_l2': lambda_l2})
+        l2_configs .append(('sparse (l2={})'.format(lambda_l2), config))
+
+    batch = next(image_batches)
+    n_images = 3  # len(batch)
+    scores, maps = attack_with_saliency_test(l2_configs, model,
+                                             batch[:n_images],
+                                             get_saliency_maps=True)
+
+    all_saliency_maps = dict()
+    image_labels = dict()
+    for batch_idx, mth, atk, map1, map2, ptb in maps:
+        map1 = viz.VisualizeImageGrayscale(
+            torch.FloatTensor(np.array(map1)).unsqueeze(0))
+        map1 = map1.squeeze(0).numpy()
+
+        map2 = viz.VisualizeImageGrayscale(
+            torch.FloatTensor(np.array(map2)).unsqueeze(0))
+        map2 = map2.squeeze(0).numpy()
+
+        ptb = np.array(ptb).swapaxes(0, 2).swapaxes(0, 1)
+        ptb = np.uint8(ptb * 255)
+        # TODO
+        rr = {'label': 'label', 'pred1': 'pred1', 'pred2': 'pred2',
+              'map1': map1, 'map2': map2, 'ptb': ptb}
+        all_saliency_maps[batch_idx][(name_conv(atk), mth)] = rr
+        image_labels[batch_idx] = 'label'
+
+    methods = [x[0] for x in l2_configs]
+    attacks = [name_conv(x[0]) for x in attackers]
+
+    title_fontsize = 20
+    resize = transforms.Resize((224, 224))
+
+    rows = 3 * n_images
+    cols = len(l2_configs) + 1
+    print('figure size: {} rows, {} cols'.format(rows, cols))
+    f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
+
+    row_idx = 0
+    for batch_idx, saliency_maps in all_saliency_maps.items():
+        image = resize(batch[batch_idx])
+        label = image_labels[batch_idx]
+        ax[row_idx, 0].imshow(image)
+        ax[row_idx, 0].axis('off')
+        ax[row_idx, 0].set_title(label, fontsize=title_fontsize)
+        for j, mth in enumerate(methods):
+            map1 = saliency_maps[(attacks[0], mth)]['map1']
+            ax[row_idx, j + 1].imshow(map1, cmap='gray')
+            ax[row_idx, j + 1].axis('off')
+            ax[row_idx, j + 1].set_title(mth, fontsize=title_fontsize)
+            for i, atk in enumerate(attacks):
+                map2 = saliency_maps[(atk, mth)]['map2']
+                ax[row_idx + i + 1, j + 1].imshow(map2, cmap='gray')
+                ax[row_idx + i + 1, j + 1].axis('off')
+                ax[row_idx + i + 1, j + 1].set_title(atk, rotation='vertical',
+                                                     x=-0.1, y=0.5,
+                                                     fontsize=title_fontsize)
+
+    f.tight_layout()
+    f.savefig('figures/figurel2.pdf')
 
 
 if __name__ == '__main__':
-    run_attack_short()
+    figures()
