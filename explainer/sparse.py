@@ -124,12 +124,13 @@ class SparseExplainer(object):
         return delta
 
 
-class RobustSparseExplainer(object):
+class RobustSparseExplainer:
+
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=0.1,
-                 times_input=False):
+                 times_input=False, init='zero'):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -139,6 +140,8 @@ class RobustSparseExplainer(object):
         self.optim = optim.lower()
         self.lr = lr
         self.times_input = times_input
+        self.init = init
+        assert init in ['zero', 'random', 'grad']
 
     def _backprop(self, inp, ind):
         zero_grad(self.model)
