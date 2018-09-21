@@ -531,7 +531,7 @@ attackers = [
 
 
 configs = [
-    ['sparse 1',
+    ('sparse zero',
      {
          'lambda_t1': 1,
          'lambda_t2': 1,
@@ -541,8 +541,9 @@ configs = [
          'optim': 'sgd',
          'lr': 0.1,
          'times_input': TIMES_INPUT,
-     }],
-    ['robust_sparse',
+         'init': 'zero',
+     }),
+    ('sparse rand',
      {
          'lambda_t1': 1,
          'lambda_t2': 1,
@@ -552,22 +553,40 @@ configs = [
          'optim': 'sgd',
          'lr': 0.1,
          'times_input': TIMES_INPUT,
-     }],
-    ['vat',
+         'init': 'random',
+     }),
+    ('sparse grad',
      {
-         'n_iterations': 1,
-         'xi': 1e-6,
+         'lambda_t1': 1,
+         'lambda_t2': 1,
+         'lambda_l1': 100,
+         'lambda_l2': 1e4,
+         'n_iterations': 10,
+         'optim': 'sgd',
+         'lr': 0.1,
          'times_input': TIMES_INPUT,
-      }],
-    ['vanilla_grad', None],
-    ['smooth_grad', None],
-    ['integrate_grad', None],
+         'init': 'grad',
+     }),
+    ('robust_sparse',
+     {
+         'lambda_t1': 1,
+         'lambda_t2': 1,
+         'lambda_l1': 100,
+         'lambda_l2': 1e4,
+         'n_iterations': 10,
+         'optim': 'sgd',
+         'lr': 0.1,
+         'times_input': TIMES_INPUT,
+         'init': 'zero',
+     }),
+    ('vanilla_grad', None),
+    ('smooth_grad', None),
+    ('integrate_grad', None),
 ]
 
 
-def run_attack_short():
+def run_attack_short(n_batches):
     results = []
-    n_batches = 3
     for batch_idx, batch in enumerate(image_batches):
         if batch_idx >= n_batches:
             break
@@ -611,9 +630,8 @@ def run_attack_long():
         check()
 
 
-def run_histogram():
+def run_histogram(n_batches):
     results = []
-    n_batches = 1
     for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
         if batch_idx >= n_batches:
             break
@@ -646,13 +664,26 @@ def name_conv(name):
     return conv[name]
 
 
-def figures():
-    batch = next(image_batches)
-    n_images = 3  # len(batch)
-    scores, maps = attack_with_saliency_test(configs, attackers, model,
-                                             batch[:n_images],
+def get_saliency_maps(n_images, configs, attackers):
+    maps = []
+    images = []
+    cnt = 0
+    for batch_idx, batch in enumerate(image_batches):
+        batch = batch[:n_images]  # hacky way of handling small n
+        _, _maps = attack_with_saliency_test(configs, attackers, model, batch,
                                              get_saliency_maps=True)
+        for i, _ in enumerate(_maps):
+            _maps[i][0] += len(maps)
+        maps += _maps
+        images += batch
+        cnt += len(batch)
+        if cnt >= n_images:
+            break
+    return maps, images
 
+
+def figures(n_images):
+    maps, images = get_saliency_maps(n_images, configs, attackers)
     all_saliency_maps = dict()
     image_labels = dict()
     for batch_idx, mth, atk, map1, map2, ptb in maps:
@@ -687,12 +718,12 @@ def figures():
     cols = len(methods) + 1
     print('figure 2 size: {} rows, {} cols'.format(rows, cols))
     f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
-    for image_idx, image in enumerate(batch[:n_images]):
+    for image_idx, image in enumerate(images):
         image = resize(image)
         label = image_labels[image_idx]
         ax[image_idx, 0].imshow(image)
         ax[image_idx, 0].axis('off')
-        ax[image_idx, 0].set_title('Input ["{}"]'.format(label),
+        ax[image_idx, 0].set_title('Input\n("{}")'.format(label),
                                    fontsize=title_fontsize)
         saliency_maps = all_saliency_maps[image_idx]
         for j, mth in enumerate(methods):
@@ -721,12 +752,12 @@ def figures():
     print('figure 3 size: {} rows, {} cols'.format(rows, cols))
     f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
     ax[0, 0].set_title('input', fontsize=title_fontsize)
-    for image_idx, image in enumerate(batch[:n_images]):
+    for image_idx, image in enumerate(images):
         image = resize(image)
         label = image_labels[image_idx]
         ax[image_idx, 0].imshow(image)
         ax[image_idx, 0].axis('off')
-        ax[image_idx, 0].set_title('Input ["{}"]'.format(label),
+        ax[image_idx, 0].set_title('Input\n("{}")'.format(label),
                                    fontsize=title_fontsize)
         saliency_maps = all_saliency_maps[image_idx]
         for j, mth in enumerate(methods):
@@ -735,13 +766,13 @@ def figures():
             pred2 = saliency_maps[(attacks[0], mth)]['pred2']
             ax[image_idx,  j + 1].imshow(map1)
             ax[image_idx,  j + 1].axis('off')
-            ax[image_idx,  j + 1].set_title('{}\n["{}"]'.format(mth, pred2),
+            ax[image_idx,  j + 1].set_title('{}\n("{}")'.format(mth, pred2),
                                             fontsize=title_fontsize)
     f.tight_layout()
     f.savefig('figures/figure3_multi.pdf')
 
     '''figure 5s'''
-    for image_idx, image in enumerate(batch[:n_images]):
+    for image_idx, image in enumerate(images):
         rows = len(attacks) + 1
         cols = len(methods) + 1
         print('figure 5[{}] size: {} rows, {} cols'.format(
@@ -752,7 +783,7 @@ def figures():
         label = image_labels[image_idx]
         ax[0, 0].imshow(image)
         ax[0, 0].axis('off')
-        ax[0, 0].set_title('Input ["{}"]'.format(label),
+        ax[0, 0].set_title('Input\n("{}")'.format(label),
                            fontsize=title_fontsize)
         # vertical text to the left of the top left image
         # ax[0, 0].text(x=0, y=0,
@@ -781,31 +812,9 @@ def figures():
         f.savefig('figures/figure5_{}.pdf'.format(image_idx))
 
 
-def figure_1():
-
-    default_config = {
-            'lambda_t1': 1,
-            'lambda_t2': 1,
-            'lambda_l1': 100,
-            'lambda_l2': 1e4,
-            'n_iterations': 10,
-            'optim': 'sgd',
-            'lr': 0.1,
-            'times_input': TIMES_INPUT,
-        }
-
-    l2_configs = []
-    for lambda_l2 in [1, 10, 100, 1e3, 1e4]:
-        config = default_config.copy()
-        config.update({'lambda_l2': lambda_l2})
-        l2_configs .append(('sparse (l2={})'.format(lambda_l2), config))
-
-    batch = next(image_batches)
-    n_images = 3  # len(batch)
-    scores, maps = attack_with_saliency_test(l2_configs, attackers, model,
-                                             batch[:n_images],
-                                             get_saliency_maps=True)
-
+def figure_config_attack(configs, attackers, filename, n_images):
+    '''x-axis is configs, y is attacks'''
+    maps, images = get_saliency_maps(n_images, configs, attackers)
     all_saliency_maps = dict()
     image_labels = dict()
     for batch_idx, mth, atk, map1, map2, ptb in maps:
@@ -828,24 +837,31 @@ def figure_1():
             'map1': map1, 'map2': map2, 'ptb': ptb}
         image_labels[batch_idx] = 'label'
 
-    methods = [x[0] for x in l2_configs]
+    methods = [x[0] for x in configs]
     attacks = [name_conv(x[0]) for x in attackers]
 
     title_fontsize = 20
     resize = transforms.Resize((224, 224))
 
-    rows = 3 * n_images
-    cols = len(l2_configs) + 1
+    rows = (len(attacks) + 1) * n_images
+    cols = len(configs) + 1
     print('figure size: {} rows, {} cols'.format(rows, cols))
     f, ax = plt.subplots(rows, cols, figsize=(4 * cols, 4 * rows))
 
     row_idx = 0
     for batch_idx, saliency_maps in all_saliency_maps.items():
-        image = resize(batch[batch_idx])
+        image = resize(images[batch_idx])
         label = image_labels[batch_idx]
         ax[row_idx, 0].imshow(image)
         ax[row_idx, 0].axis('off')
         ax[row_idx, 0].set_title(label, fontsize=title_fontsize)
+        for i, atk in enumerate(attacks):
+            ptb = saliency_maps[(atk, mth)]['ptb']
+            ax[row_idx + i + 1, 0].imshow(ptb)
+            ax[row_idx + i + 1, 0].axis('off')
+            ax[row_idx + i + 1, 0].set_title(atk, rotation='vertical',
+                                             x=-0.1, y=0.5,
+                                             fontsize=title_fontsize)
         for j, mth in enumerate(methods):
             map1 = saliency_maps[(attacks[0], mth)]['map1']
             ax[row_idx, j + 1].imshow(map1, cmap='gray')
@@ -855,14 +871,57 @@ def figure_1():
                 map2 = saliency_maps[(atk, mth)]['map2']
                 ax[row_idx + i + 1, j + 1].imshow(map2, cmap='gray')
                 ax[row_idx + i + 1, j + 1].axis('off')
-                ax[row_idx + i + 1, j + 1].set_title(atk, rotation='vertical',
-                                                     x=-0.1, y=0.5,
-                                                     fontsize=title_fontsize)
-        row_idx += len(attacks)
+        row_idx += len(attacks) + 1
 
     f.tight_layout()
-    f.savefig('figures/figurel2.pdf')
+    f.savefig(filename)
+
+
+default_sparse_config = {
+        'lambda_t1': 1,
+        'lambda_t2': 1,
+        'lambda_l1': 100,
+        'lambda_l2': 1e4,
+        'n_iterations': 10,
+        'optim': 'sgd',
+        'lr': 0.1,
+        'times_input': TIMES_INPUT,
+        'init': 'zero',
+    }
+
+
+def figure_l2_attack(n_images):
+    configs = []
+    for lambda_l2 in [0, 1, 10, 1e2, 1e3, 1e4, 1e5]:
+        config = default_sparse_config.copy()
+        config.update({'lambda_l2': lambda_l2})
+        configs.append(('sparse (l2={})'.format(lambda_l2), config))
+    figure_config_attack(configs, attackers,
+                         'figures/figure_l2_attack.pdf',
+                         n_images)
+
+
+def figure_l1_attack(n_images):
+    configs = []
+    for lambda_l1 in [0, 1, 10, 1e2, 1e3, 1e4, 1e5]:
+        config = default_sparse_config.copy()
+        config.update({'lambda_l1': lambda_l1})
+        configs.append(('sparse (l1={})'.format(lambda_l1), config))
+    figure_config_attack(configs, attackers,
+                         'figures/figure_l1_attack.pdf',
+                         n_images)
+
+
+def figure_niter_attack(n_images):
+    configs = []
+    for n_iterations in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
+        config = default_sparse_config.copy()
+        config.update({'n_iterations': n_iterations})
+        configs.append(('sparse (niter={})'.format(n_iterations), config))
+    figure_config_attack(configs, attackers,
+                         'figures/figure_niter_attack.pdf',
+                         n_images)
 
 
 if __name__ == '__main__':
-    figures()
+    run_attack_short(n_batches=3)

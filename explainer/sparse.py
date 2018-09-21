@@ -15,12 +15,18 @@ def zero_grad(x):
                     p.grad.data.zero_()
 
 
+def _l2_normalize(d):
+    d_reshaped = d.view(d.shape[0], -1, *(1 for _ in range(d.dim() - 2)))
+    d /= torch.norm(d_reshaped, 2, dim=1, keepdim=True) + 1e-8
+    return d
+
+
 class SparseExplainer(object):
     def __init__(self, model,
                  lambda_t1=1, lambda_t2=1,
                  lambda_l1=1e4, lambda_l2=1e4,
                  n_iterations=10, optim='sgd', lr=0.1,
-                 times_input=False):
+                 times_input=False, init='zero'):
         self.model = model
         self.lambda_t1 = lambda_t1
         self.lambda_t2 = lambda_t2
@@ -30,6 +36,8 @@ class SparseExplainer(object):
         self.optim = optim.lower()
         self.lr = lr
         self.times_input = times_input
+        self.init = init
+        assert init in ['zero', 'random', 'grad']
 
     def _backprop(self, inp, ind):
         zero_grad(self.model)
@@ -45,12 +53,17 @@ class SparseExplainer(object):
     def explain(self, inp, ind=None, return_loss=False):
         batch_size, n_chs, height, width = inp.shape
         img_size = height * width
-        '''initialize delta with zero or grad'''
-        delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
-        # output = self.model(inp)
-        # out_loss = F.cross_entropy(output, output.max(1)[1])
-        # delta = torch.autograd.grad(out_loss, inp)[0].data
-        # delta = delta.view(batch_size, n_chs, img_size)
+        if self.init == 'zero':
+            delta = torch.zeros((batch_size, n_chs, img_size)).cuda()
+        elif self.init == 'grad':
+            output = self.model(inp)
+            out_loss = F.cross_entropy(output, output.max(1)[1])
+            delta = torch.autograd.grad(out_loss, inp)[0].data
+            delta = delta.view(batch_size, n_chs, img_size)
+        elif self.init == 'random':
+            delta = torch.rand((batch_size, n_chs, img_size))
+            delta = delta.sub(0.5).cuda()
+            delta = _l2_normalize(delta)
         delta = nn.Parameter(delta, requires_grad=True)
 
         if self.optim == 'sgd':
