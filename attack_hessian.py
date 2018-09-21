@@ -17,6 +17,7 @@ from preprocess import get_preprocess
 
 import matplotlib.pyplot as plt
 from PIL import Image
+from plotnine import ggplot, aes, geom_density, facet_grid
 
 
 def zero_grad(x):
@@ -619,10 +620,13 @@ def run_histogram():
         ['method', 'channel', 'saliency']
     )
     df = pd.DataFrame(results, columns=columns)
-    # df = df.groupby(['channel', 'method'])
-    # df = df.agg(lambda x: list(itertools.chain(*x)))
-    print(df)
-    df.to_pickle('histogram.pkl')
+    p = (
+        ggplot(df)
+        + aes(x='saliency')
+        + geom_density()
+        + facet_grid('method ~ channel')
+    )
+    p.save('histogram.pdf')
 
 
 def figures():
