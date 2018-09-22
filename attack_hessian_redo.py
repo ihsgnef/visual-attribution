@@ -15,7 +15,8 @@ import torchvision.transforms as transforms
 import viz
 import utils
 from explainers_redo import zero_grad
-from explainers_redo import SparseExplainer, RobustSparseExplainer
+from explainers_redo import SparseExplainer, RobustSparseExplainer, \
+    VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer
 
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -334,18 +335,17 @@ def run_attack(model, batches, explainers, attackers):
 if __name__ == '__main__':
     epsilon = 2 / 255
 
-    explainers = [
-        ('Sparse (l1=0.5)', SparseExplainer(lambda_l1=0.5)),
+    attackers = [
+        ('Ghorbani', GhorbaniAttack(epsilon=epsilon)),
+        ('Random', ScaledNoiseAttack(epsilon=epsilon)),
     ]
 
-    attackers = [
-        ('Ghorbani',
-         GhorbaniAttack(
-             epsilon=epsilon,
-             topk_agg=lambda x: np.abs(x),
-             # topk_agg=lambda x: np.abs(x).sum(axis=1),
-         )),
-        ('Random', ScaledNoiseAttack(epsilon=epsilon)),
+    explainers = [
+        ('Sparse (l1=0.5)', SparseExplainer(lambda_l1=0.5)),
+        ('Robust (l1=0.5)', RobustSparseExplainer(lambda_l1=0.5)),
+        ('Vanilla', VanillaGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),
+        ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
     model, batches = setup_imagenet(n_batches=1)

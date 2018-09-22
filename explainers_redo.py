@@ -1,8 +1,10 @@
+import numpy as np
+from collections import defaultdict
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from collections import defaultdict
 
 
 def zero_grad(x):
@@ -218,3 +220,70 @@ class RobustSparseExplainer(SparseExplainer):
         if self.times_input:
             delta *= x.data
         return delta
+
+
+class VanillaGradExplainer:
+
+    def __init__(self, times_input=False):
+        self.times_input = times_input
+
+    def get_input_grad(self, x, output, y, create_graph=False):
+        '''two methods for getting input gradient'''
+        loss = F.cross_entropy(output, y)
+        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
+
+        # grad_out = torch.zeros_like(o.utput.data)
+        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
+        # x_grad, = torch.autograd.grad(output, x,
+        #                               grad_outputs=grad_out,
+        #                               create_graph=create_graph)
+        return x_grad
+
+    def explain(self, model, x):
+        x = Variable(x, requires_grad=True)
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y).data
+        if self.times_input:
+            x_grad *= x.data
+        return x_grad
+
+
+class IntegrateGradExplainer(VanillaGradExplainer):
+    def __init__(self, n_iter=100):
+        self.n_iter = n_iter
+
+    def explain(self, model, x):
+        grad = 0
+        x_data = x.clone()
+        for alpha in np.arange(1 / self.n_iter, 1.0, 1 / self.n_iter):
+            x_var = Variable(x_data * alpha, requires_grad=True)
+            output = model(x_var)
+            y = output.max(1)[1]
+            g = self.get_input_grad(x_var, output, y)
+            grad += g.data
+        return grad * x_data / self.n_iter
+
+
+class SmoothGradExplainer(object):
+    def __init__(self, base_explainer=None, stdev_spread=0.15,
+                 nsamples=25, magnitude=True):
+        if base_explainer is None:
+            base_explainer = VanillaGradExplainer()
+        self.base_explainer = base_explainer
+        self.stdev_spread = stdev_spread
+        self.nsamples = nsamples
+        self.magnitude = magnitude
+
+    def explain(self, model, x):
+        stdev = self.stdev_spread * (x.max() - x.min())
+        total_gradients = 0
+        for i in range(self.nsamples):
+            noise = torch.randn(x.shape).cuda() * stdev
+            x_var = noise + x.clone()
+            grad = self.base_explainer.explain(model, x_var)
+            if self.magnitude:
+                total_gradients += grad ** 2
+            else:
+                total_gradients += grad
+        return total_gradients / self.nsamples
