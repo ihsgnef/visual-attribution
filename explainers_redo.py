@@ -72,14 +72,14 @@ class SparseExplainer:
     def initialize_delta(self, model, x):
         batch_size, n_chs, height, width = x.shape
         if self.init == 'zero':
-            delta = torch.zeros((batch_size, n_chs, -1)).cuda()
+            delta = torch.zeros((batch_size, n_chs, height * width)).cuda()
         elif self.init == 'grad':
             output = model(x)
             y = output.max(1)[1]
             delta = self.get_input_grad(x, output, y).data
             delta = delta.view(batch_size, n_chs, -1)
         elif self.init == 'random':
-            delta = torch.rand((batch_size, n_chs, -1))
+            delta = torch.rand((batch_size, n_chs, height * width))
             delta = delta.sub(0.5).cuda()
             delta = _l2_normalize(delta)
         delta = nn.Parameter(delta, requires_grad=True)

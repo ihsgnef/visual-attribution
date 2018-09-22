@@ -151,11 +151,11 @@ class GhorbaniAttack:
             delta = delta.sign().data
 
             # verify same prediction
-            for bidx in range(batch_size):
-                if stopped[bidx] or y.data[bidx] != y_org[bidx]:
-                    x[bidx] = x_prev[bidx]
-                    delta[bidx].zero_()
-                    stopped[bidx] = True
+            for idx in range(batch_size):
+                if stopped[idx] or y.data[idx] != y_org[idx]:
+                    x[idx] = x_prev[idx]
+                    delta[idx].zero_()
+                    stopped[idx] = True
 
             if all(stopped):
                 break
@@ -179,7 +179,7 @@ class ScaledNoiseAttack:
         noise = 2 * np.random.randint(2, size=x.shape) - 1
         noise = np.sign(noise) * self.epsilon
         x = np.clip(x + noise * x, 0, 1)
-        x = torch.FloatTensor(x)
+        x = torch.FloatTensor(x).cuda()
         return x
 
 
@@ -219,15 +219,15 @@ def aggregate(saliency):
     '''combine saliency mapping with image
     from 4D (bsz, 3, h, w) to 3D (bsz, h, w)
     '''
-    return np.abs(saliency).sum(dim=1)
+    return np.abs(saliency).sum(axis=1)
 
 
-def saliency_correlation(s1, s2, image):
+def saliency_correlation(s1, s2):
     # s1 and s2 are batched
-    s1 = aggregate(s1, image)
-    s2 = aggregate(s2, image)
+    s1 = aggregate(s1)
+    s2 = aggregate(s2)
     assert s1.shape == s2.shape
-    assert s1.ndimension() == 3  # batch, height, width
+    assert s1.ndim == 3  # batch, height, width
     batch_size = s1.shape[0]
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
@@ -237,9 +237,9 @@ def saliency_correlation(s1, s2, image):
     return scores
 
 
-def channel_correlation(s1, s2, image):
+def channel_correlation(s1, s2):
     assert s1.shape == s2.shape
-    assert s1.ndimension() == 4  # batch, 3, height, width
+    assert s1.ndim == 4  # batch, 3, height, width
     batch_size = s1.shape[0]
     s1 = np.abs(s1).reshape(batch_size, 3, -1)
     s2 = np.abs(s2).reshape(batch_size, 3, -1)
@@ -251,52 +251,36 @@ def channel_correlation(s1, s2, image):
 
 
 def attack_batch(model, batch, explainers, attackers, return_saliency=False):
-    scores = []
-    saliency_maps = []
+    results = []
     batch_size = batch.shape[0]
     for mth_name, explainer in explainers:
         saliency_1 = explainer.explain(model, batch.clone()).cpu().numpy()
         for atk_name, attacker in attackers:
-            perturbed = attacker.attack(batch.clone(), saliency_1)
+            perturbed = attacker.attack(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
-            perturbed = Variable(perturbed, requires_grad=True)
-            saliency_2 = explainer.explain(model, batch.clone()).cpu().numpy()
+            saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
 
-            ss = [
-                saliency_correlation(saliency_1, saliency_2),
-                *channel_correlation(saliency_1, saliency_2),
-            ]
-            ss = list(map(list, zip(*ss)))
+            # scores = [
+            #     saliency_correlation(saliency_1, saliency_2),
+            #     *channel_correlation(saliency_1, saliency_2),
+            # ]
+            scores = saliency_correlation(saliency_1, saliency_2)
 
             for i in range(batch_size):
-                meta_data = [i, mth_name, atk_name]
-                scores.append(meta_data + ss[i])
+                row = {
+                    'idx': i,
+                    'explainer': mth_name,
+                    'attacker': atk_name,
+                    'spearman': scores[i],
+                }
                 if return_saliency:
-                    saliency_maps.append(
-                        meta_data +
-                        [saliency_1[i], saliency_2[i], perturbed_np[i]]
-                    )
-    if return_saliency:
-        return scores, saliency_maps
-    else:
-        return scores
-
-
-def run_attack(model, batches, explainers, attackers):
-    results = []
-    for batch_idx, batch in enumerate(batches):
-        # TODO
-        # labels = [y for x, y in batch]
-        # batch = torch.stack([transf(x) for x, y in batch]).cuda()
-        batch = torch.stack([transf(x) for x in batch]).cuda()
-        results += attack_batch(model, batch, explainers, attackers)
-    n_scores = len(results[0]) - 2  # number of different scores
-    columns = (
-        ['method', 'attack'] +
-        ['score_{}'.format(i) for i in range(n_scores)]
-    )
-    df = pd.DataFrame(results, columns=columns)
-    print(df.groupby(['attack', 'method']).mean())
+                    row.update({
+                        'saliency_1': saliency_1[i],
+                        'saliency_2': saliency_2[i],
+                        'perturbed': perturbed_np,
+                    })
+                results.append(row)
+    return results 
 
 
 def setup_imagenet(batch_size=16, n_batches=-1, n_images=-1):
@@ -319,13 +303,32 @@ def setup_imagenet(batch_size=16, n_batches=-1, n_images=-1):
         image_files = image_files[:n_images]
     elif n_batches > 0:
         image_files = image_files[:batch_size * n_batches]
+    else:
+        print('using all images')
 
     batch_indices = list(range(0, len(image_files), batch_size))
     batch_files = [image_files[i: i + batch_size] for i in batch_indices]
     batches = map(batch_loader, batch_files)
     print('image loaded', len(batch_files))
-
     return model, batches
+
+
+def run_attack(model, batches, explainers, attackers):
+    results = []
+    idx_shift = 0
+    for batch_idx, batch in enumerate(batches):
+        # TODO
+        # labels = [y for x, y in batch]
+        # batch = torch.stack([transf(x) for x, y in batch]).cuda()
+        batch = torch.stack([transf(x) for x in batch]).cuda()
+        rows = attack_batch(model, batch, explainers, attackers)
+        for i, row in enumerate(rows):
+            rows[i]['idx'] += idx_shift
+        idx_shift += batch.shape[0]
+        results += rows
+    df = pd.DataFrame(results)
+    df.drop(['idx'], axis=1)
+    print(df.groupby(['attacker', 'explainer']).mean())
 
 
 if __name__ == '__main__':
@@ -340,7 +343,7 @@ if __name__ == '__main__':
          GhorbaniAttack(
              epsilon=epsilon,
              topk_agg=lambda x: np.abs(x),
-             # topk_agg=lambda x: np.abs(x).sum(1),
+             # topk_agg=lambda x: np.abs(x).sum(axis=1),
          )),
         ('Random', ScaledNoiseAttack(epsilon=epsilon)),
     ]
