@@ -16,6 +16,8 @@ import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import pylab as P
+import pandas as pd
+from plotnine import ggplot, aes, geom_density, facet_grid
 
 batch_size = 1
 if __name__ == '__main__':    
@@ -23,7 +25,7 @@ if __name__ == '__main__':
     image_files = list(glob.iglob(image_path, recursive=True))
     np.random.seed(0)
     np.random.shuffle(image_files)
-    image_files = image_files[:100]
+    image_files = image_files[:5]
     indices = list(range(0, len(image_files), batch_size))
     model = utils.load_model('resnet18')
     model.cuda()
@@ -38,6 +40,7 @@ if __name__ == '__main__':
         'lr': 1e-1,
     }
     
+    results = []
     saliency_histo_list_grad = []
     saliency_histo_list_sparse = []
     for batch_idx, start in enumerate(indices):
@@ -50,18 +53,32 @@ if __name__ == '__main__':
         explainer = get_explainer(model, 'vanilla_grad', None)
         saliency = explainer.explain(copy.deepcopy(inputs), None)
         saliency = viz.VisualizeImageGrayscale(saliency)       
-        saliency_histo_list_grad.extend(saliency.cpu().numpy()[0].ravel())
+        results.append(['Gradient',saliency.cpu().numpy()[0].ravel()])
+        #saliency_histo_list_grad.extend(saliency.cpu().numpy()[0].ravel())
 
         explainer = get_explainer(model, 'sparse', sparse_args)
         saliency = explainer.explain(copy.deepcopy(inputs), None)
         saliency = viz.VisualizeImageGrayscale(saliency)       
-        saliency_histo_list_sparse.extend(saliency.cpu().numpy()[0].ravel())        
-    
-    n_bins = 40
-    fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)    
-    axs[0].hist(saliency_histo_list_grad, bins=n_bins)
-    axs[1].hist(saliency_histo_list_sparse, bins=n_bins)
-    plt.savefig('output/histogram.png')
-    print(len(saliency_histo_list_sparse))
-    print(len(saliency_histo_list_grad))
+        results.append(['Sparse',saliency.cpu().numpy()[0].ravel()])
+        #saliency_histo_list_sparse.extend(saliency.cpu().numpy()[0].ravel())        
+        
+    columns = (
+        ['Method', 'Saliency Distribution']
+    )
+    df = pd.DataFrame(results, columns=columns)
+    p = (
+        ggplot(df)
+        + aes(x='saliency')
+        + geom_density()
+        + facet_grid('method ~ channel')
+    )
+    p.save('histogram.pdf')
+
+    # n_bins = 40
+    # fig, axs = plt.subplots(1, 2, sharey=True, tight_layout=True)    
+    # axs[0].hist(saliency_histo_list_grad, bins=n_bins)
+    # axs[1].hist(saliency_histo_list_sparse, bins=n_bins)
+    # plt.savefig('output/histogram.png')
+    # print(len(saliency_histo_list_sparse))
+    # print(len(saliency_histo_list_grad))
 
