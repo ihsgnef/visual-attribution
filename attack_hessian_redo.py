@@ -1,3 +1,5 @@
+import os
+import json
 import glob
 import pickle
 import numpy as np
@@ -64,6 +66,12 @@ def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
     else:
         print('saliency shape wrong')
     return topk_mask
+
+
+class EmptyAttack:
+
+    def attack(self, model, x, saliency=None):
+        return x
 
 
 class GhorbaniAttack:
@@ -172,7 +180,7 @@ class GhorbaniAttack:
 
 class ScaledNoiseAttack:
 
-    def __init__(self, epsilon):
+    def __init__(self, epsilon=2 / 255):
         self.epsilon = epsilon
 
     def attack(self, model, x, saliency=None):
@@ -216,26 +224,16 @@ class FGSM:
         return x
 
 
-def aggregate(saliency):
-    '''combine saliency mapping with image
-    from 4D (bsz, 3, h, w) to 3D (bsz, h, w)
-    '''
-    return np.abs(saliency).sum(axis=1)
-
-
 def saliency_correlation(s1, s2):
     # s1 and s2 are batched
-    s1 = aggregate(s1)
-    s2 = aggregate(s2)
     assert s1.shape == s2.shape
-    assert s1.ndim == 3  # batch, height, width
+    assert s1.ndim == 4
     batch_size = s1.shape[0]
+    s1 = np.abs(s1).sum(axis=1)
+    s2 = np.abs(s2).sum(axis=1)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
-    scores = []
-    for x1, x2 in zip(s1, s2):
-        scores.append(spearmanr(x1, x2).correlation)
-    return scores
+    return [spearmanr(x1, x2).correlation for x1, x2 in zip(s1, s2)]
 
 
 def channel_correlation(s1, s2):
@@ -278,66 +276,145 @@ def attack_batch(model, batch, explainers, attackers, return_saliency=False):
                     row.update({
                         'saliency_1': saliency_1[i],
                         'saliency_2': saliency_2[i],
-                        'perturbed': perturbed_np,
+                        'perturbed': perturbed_np[i],
                     })
                 results.append(row)
-    return results 
+    return results
 
 
-def setup_imagenet(batch_size=16, n_batches=-1, n_images=-1):
+def setup_imagenet(batch_size=16, n_batches=-1, n_examples=-1):
     model = utils.load_model('resnet50')
     model.eval()
     model.cuda()
     print('model loaded')
 
-    def batch_loader(image_files):
-        return [viz.pil_loader(x) for x in image_files]
-
-    # TODO also load labels
-    # TODO add indices
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
     image_files = list(glob.iglob(image_path, recursive=True))
-    np.random.seed(0)
-    np.random.shuffle(image_files)
+    image_files = sorted(image_files, key=lambda x: os.path.basename(x))
 
-    if n_images > 0:
-        image_files = image_files[:n_images]
+    from imagenet1000_clsid_to_human import clsid_to_human
+
+    label_path = '/fs/imageNet/imagenet/ILSVRC2012_devkit_t12/' \
+                 + 'data/ILSVRC2012_validation_ground_truth.txt'
+    with open(label_path) as f:
+        labels = [clsid_to_human[int(x) - 1] for x in f.readlines()]
+
+    examples = list(zip(range(len(labels)), image_files, labels))
+
+    np.random.seed(0)
+    np.random.shuffle(examples)
+
+    if n_examples > 0:
+        examples = examples[:n_examples]
     elif n_batches > 0:
-        image_files = image_files[:batch_size * n_batches]
+        examples = examples[:batch_size * n_batches]
     else:
         print('using all images')
 
-    batch_indices = list(range(0, len(image_files), batch_size))
-    batch_files = [image_files[i: i + batch_size] for i in batch_indices]
-    batches = map(batch_loader, batch_files)
-    print('image loaded', len(batch_files))
+    def batch_loader(batch):
+        batch = list(map(list, zip(*batch)))
+        ids, xs, ys = batch
+        return (ids, [viz.pil_loader(x) for x in xs], ys)
+
+    batch_indices = list(range(0, len(examples), batch_size))
+    batches = [examples[i: i + batch_size] for i in batch_indices]
+    batches = map(batch_loader, batches)
+    print('image loaded', len(batch_indices))
     return model, batches
 
 
-def run_attack(model, batches, explainers, attackers):
+def run_attack(explainers, attackers):
+    model, batches = setup_imagenet(n_batches=1)
     results = []
-    idx_shift = 0
     for batch_idx, batch in enumerate(batches):
-        # TODO
-        # labels = [y for x, y in batch]
-        # batch = torch.stack([transf(x) for x, y in batch]).cuda()
-        batch = torch.stack([transf(x) for x in batch]).cuda()
-        rows = attack_batch(model, batch, explainers, attackers)
+        ids, xs, ys = batch
+        xs = torch.stack([transf(x) for x in xs]).cuda()
+        rows = attack_batch(model, xs, explainers, attackers)
         for i, row in enumerate(rows):
-            rows[i]['idx'] += idx_shift
-        idx_shift += batch.shape[0]
+            rows[i]['idx'] = ids[row[i]['idx']]
         results += rows
     df = pd.DataFrame(results)
     df.drop(['idx'], axis=1)
     print(df.groupby(['attacker', 'explainer']).mean())
 
 
-if __name__ == '__main__':
-    epsilon = 2 / 255
+def plot_matrix(matrix, filename):
+    '''Each entry in the matrix should be a dictionary of:
+    image: an image ready to be plotted by imshow
+    cmap: color map or None
+    title: title
+    rotate_title: if True show on the left of the image
+    '''
+    n_rows = len(matrix)
+    n_cols = len(matrix[0])
+    f, ax = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
+    for i, row in enumerate(matrix):
+        for j, c in enumerate(row):
+            image = c.get('image', None)
+            cmap = c.get('cmap', None)
+            title = c.get('title', None)
+            rotate_title = c.get('rotate_title', False)
+            if image is None:
+                ax[i, j].imshow(np.zeros((244, 244)), cmap='gray')
+            if cmap is None:
+                ax[i, j].imshow(image)
+            else:
+                ax[i, j].imshow(image, cmap=cmap)
+            if title is not None:
+                title_fontsize = 20
+                if rotate_title:
+                    ax[i, j].set_title(title, rotation='vertical',
+                                       x=-0.1, y=0.5, fontsize=title_fontsize)
+                else:
+                    ax[i, j].set_title(c['title'], fontsize=title_fontsize)
+            ax[i, j].set_axis_off()
+    f.tight_layout()
+    f.savefig(filename)
+
+
+def get_saliency_maps(model, batches, explainers, attackers):
+    '''Collect saliency mappings.
+    Returns a dictionary keyed by the example ids, each entry has:
+    idx: example id (real id)
+    attacker: name of the attacker
+    explainer: name of the explainer
+    perturbed: perturbed input
+    saliency_1: saliency without perturbation
+    saliency_2: saliency with perturbation
+    '''
+    results = defaultdict(dict)
+    all_images = dict()
+    all_labels = dict()
+    all_ids = []
+    for batch_idx, batch in enumerate(batches):
+        ids, images, labels = batch
+        for idx, img, lab in zip(ids, images, labels):
+            all_images[idx] = img
+            all_labels[idx] = lab
+            all_ids.append(idx)
+        xs = torch.stack([transf(x) for x in images]).cuda()
+        rows = attack_batch(model, xs, explainers, attackers,
+                            return_saliency=True)
+        for i, row in enumerate(rows):
+            idx = ids[row['idx']]
+            attacker = row['attacker']
+            explainer = row['explainer']
+            row['saliency_1'] = np.abs(row['saliency_1']).sum(0)
+            row['saliency_2'] = np.abs(row['saliency_2']).sum(0)
+            ptb = np.array(row['perturbed']).swapaxes(0, 2).swapaxes(0, 1)
+            row['perturbed'] = np.uint8(ptb * 255)
+            row['idx'] = idx
+            results[idx][(attacker, explainer)] = row
+    return results, all_ids, all_images, all_labels
+
+
+def plot_explainer_attacker():
+    n_examples = 4
 
     attackers = [
-        ('Ghorbani', GhorbaniAttack(epsilon=epsilon)),
-        ('Random', ScaledNoiseAttack(epsilon=epsilon)),
+        ('Original', EmptyAttack()),  # empty attacker so perturbed = original
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
     ]
 
     explainers = [
@@ -348,5 +425,107 @@ if __name__ == '__main__':
         ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
-    model, batches = setup_imagenet(n_batches=1)
-    run_attack(model, batches, explainers, attackers)
+    model, batches = setup_imagenet(n_examples=n_examples)
+    results, ids, images, labels = get_saliency_maps(model, batches,
+                                                     explainers, attackers)
+    assert len(results) == n_examples
+
+    # construct the matrix to be plotted
+    matrix = []
+    ids = sorted(ids)  # ordered by real ids
+    for idx in ids:
+        label = '"{}"'.format(labels[idx])
+        for i, (attacker, _) in enumerate(attackers):
+            cell = results[idx][(attacker, explainers[0][0])]
+            # show label on top if empty attacker
+            # otherwise show attack name on the left
+            row = [{
+                    'image': cell['perturbed'],
+                    'title': label if i == 0 else attacker,
+                    'rotate_title': False if i == 0 else True,
+            }]
+            for explainer, _ in explainers:
+                # only show explainer label on top of the row of original
+                # example without perturbation
+                cell = results[idx][(attacker, explainer)]
+                s1 = cell['saliency_1'] 
+                s2 = cell['saliency_2'] 
+                row.append({
+                    'image': s1 if i == 0 else s2,
+                    'cmap': 'gray',
+                    'title': explainer if i == 0 else None,
+                })
+            matrix.append(row)
+
+    plot_matrix(matrix, 'figures/explainer_attacker.pdf')
+
+
+def plot_l1_l2():
+    n_examples = 4
+
+    attackers = [
+        # ('Original', EmptyAttack()),  # empty attacker so perturbed = original
+        ('Ghorbani', GhorbaniAttack()),
+    ]
+
+    l1s = [0, 0.1, 0.5, 1, 10, 100]
+    l2s = [10, 1e2, 1e3, 1e4, 1e5]
+
+    explainers = []
+    for l1 in l1s:
+        for l2 in l2s:
+            explainers.append(
+                (
+                    (l1, l2),  # use the combination as name
+                    SparseExplainer(lambda_l1=l1, lambda_l2=l2)
+                )
+            )
+            
+    model, batches = setup_imagenet(n_examples=n_examples)
+    results, ids, images, labels = get_saliency_maps(model, batches,
+                                                     explainers, attackers)
+    assert len(results) == n_examples
+    resize = transforms.Resize((224, 224))
+    # construct the matrix to be plotted
+    matrix = []
+    ids = sorted(ids)  # ordered by real ids
+    for idx in ids:
+        # label = '"{}"'.format(labels[idx])
+        attacker = attackers[0][0]
+        image = resize(images[idx])
+        for i, l2 in enumerate(l2s):
+            row = [{
+                'image': image,
+                'title': 'l2={}'.format(l2),
+                'rotate_title': True
+            }]
+            for l1 in l1s:
+                # only show explainer label on top of the row of original
+                # example without perturbation
+                cell = results[idx][(attacker, (l1, l2))]
+                row.append({
+                    'image': cell['saliency_1'],
+                    'cmap': 'gray',
+                    'title': 'l1={}'.format(l1) if i == 0 else None,
+                })
+            matrix.append(row)
+    plot_matrix(matrix, 'figures/l1_l2.pdf')
+
+
+if __name__ == '__main__':
+    attackers = [
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
+    ]
+
+    explainers = [
+        ('Sparse (l1=0.5)', SparseExplainer(lambda_l1=0.5)),
+        ('Robust (l1=0.5)', RobustSparseExplainer(lambda_l1=0.5)),
+        ('Vanilla', VanillaGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),
+        ('IntegratedGrad', IntegrateGradExplainer()),
+    ]
+
+    # run_attack(explainers, attackers)
+    # plot_explainer_attacker()
+    plot_l1_l2()
