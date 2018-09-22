@@ -1,22 +1,34 @@
 import numpy as np
 from torch.autograd import Variable, Function
+import torch.nn.functional as F
 import torch
 import types
 from explainer import sparse as sparse
+
 
 class VanillaGradExplainer(object):
     def __init__(self, model):
         self.model = model
 
+    # def _backprop(self, inp, ind):
+    #     '''inefficient original implementation'''
+    #     output = self.model(inp)
+    #     # if ind is None:
+    #     ind = output.data.max(1)[1]
+    #     grad_out = output.data.clone()
+    #     grad_out.fill_(0.0)
+    #     grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
+    #     output.backward(grad_out)
+    #     return inp.grad.data
+
     def _backprop(self, inp, ind):
+        '''backprop from 0-1 instead of cross entropy'''
         output = self.model(inp)
-        #if ind is None:
         ind = output.data.max(1)[1]
-        grad_out = output.data.clone()
-        grad_out.fill_(0.0)
+        grad_out = torch.zeros_like(output.data)
         grad_out.scatter_(1, ind.unsqueeze(0).t(), 1.0)
-        output.backward(grad_out)
-        return inp.grad.data
+        inp_grad, = torch.autograd.grad(output, inp, grad_outputs=grad_out)
+        return inp_grad.data
 
     def explain(self, inp, ind=None):
         return self._backprop(inp, ind)

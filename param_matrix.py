@@ -1,17 +1,16 @@
 import itertools
 import pytablewriter
-import numpy as np
 
 import viz
 import utils
 from create_explainer import get_explainer
 from preprocess import get_preprocess
 from explainer.sparse import SparseExplainer
-from viz import VisualizeImageGrayscale
 
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
+
 
 def get_saliency(model, explainer, inp, raw_img,
                  model_name, method_name, viz_style, filename):
@@ -40,6 +39,7 @@ def get_saliency(model, explainer, inp, raw_img,
     plt.savefig(filename)
     plt.axis('off')
     return saliency
+
 
 def lambda_l1_n_iter(input_path, output_path):
     model_name = 'resnet50'
@@ -80,7 +80,7 @@ def lambda_l1_n_iter(input_path, output_path):
 
 
 def lambda_l1_l2(input_path, output_path):
-    model_name = 'softplus50'#'resnet50'
+    model_name = 'softplus50'  # 'resnet50'
     method_name = 'sparse'
     viz_style = 'imshow'
     raw_img = viz.pil_loader(input_path)
@@ -161,7 +161,7 @@ def baselines(input_path, output_path):
 if __name__ == '__main__':
     # baselines(input_path='examples/tricycle.png',
     #           output_path='output/tricycle')
-    #lambda_l1_n_iter(input_path='examples/fox.png',
-    #                 output_path='output/fox')
+    # lambda_l1_n_iter(input_path='examples/fox.png',
+    #                  output_path='output/fox')
     lambda_l1_l2(input_path='examples/fox.png',
                  output_path='output/fox')
