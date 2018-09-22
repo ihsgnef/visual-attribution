@@ -1,8 +1,10 @@
 import glob
+import pickle
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from scipy.stats import spearmanr
+from collections import defaultdict
 
 import torch
 import torch.nn.functional as F
@@ -18,6 +20,14 @@ from preprocess import get_preprocess
 import matplotlib.pyplot as plt
 from PIL import Image
 from plotnine import ggplot, aes, geom_density, facet_grid
+
+
+EPSILON = 2 / 255
+GHO_K = int(1e4)
+transf = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ])
 
 
 def zero_grad(x):
@@ -82,7 +92,7 @@ class FGSM:
         batch_size, n_chs, height, width = inp.shape
         step_size = self.epsilon / self.n_iterations
         for i in range(self.n_iterations):
-            zero_grad(model)
+            zero_grad(self.model)
             new_inp = Variable(inp, requires_grad=True)
             output = self.model(new_inp)
             out_loss = F.cross_entropy(output, output.max(1)[1])
@@ -181,7 +191,7 @@ class GhorbaniAttack:
         step_size = self.epsilon / self.n_iterations
         stopped = [False for _ in range(batch_size)]
         for i in range(self.n_iterations):
-            zero_grad(model)
+            zero_grad(self.model)
             new_inp = Variable(inp, requires_grad=True)
             output = self.model(new_inp)
             ind = output.max(1)[1]
@@ -322,7 +332,7 @@ def perturb(image, delta, mask, flip=False):
     return torch.from_numpy(perturbed).cuda()
 
 
-def saliency_histogram(configs, model, raw_images):
+def saliency_histogram(model, batch, configs):
     results = []
     for mth_name, kwargs in configs:
         explainer = get_explainer(model, mth_name, kwargs)
@@ -342,22 +352,23 @@ def saliency_histogram(configs, model, raw_images):
     return results
 
 
-def attack_with_saliency_test(configs, attackers, model, raw_images,
-                              get_saliency_maps=False):
-    images = torch.stack([transf(x) for x in raw_images]).cuda()
+def attack_batch_with_saliency(model, batch,
+                               configs, attackers,
+                               get_maps=False):
+    image_batch = torch.stack([transf(x) for x in image_batch]).cuda()
 
     '''run saliency methods'''
     results = []
     saliency_maps = []
-    batch_size = images.shape[0]
+    batch_size = image_batch.shape[0]
     for mth_name, kwargs in configs:
         explainer = get_explainer(model, mth_name, kwargs)
-        inputs = Variable(images.clone().cuda(), requires_grad=True)
+        inputs = Variable(image_batch.clone().cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs)
         map_1 = saliency_1.cpu().numpy()
 
         for atk_name, atk in attackers:
-            perturbed, delta = atk.attack_with_saliency(images.clone(),
+            perturbed, delta = atk.attack_with_saliency(image_batch.clone(),
                                                         saliency_1.clone())
             ptb_np = perturbed.cpu().numpy()
             # unrestricted perturbation
@@ -373,33 +384,34 @@ def attack_with_saliency_test(configs, attackers, model, raw_images,
 
             for i in range(batch_size):
                 results.append([mth_name, atk_name] + scores[i])
-                if get_saliency_maps:
+                if get_maps:
                     saliency_maps.append([i, mth_name, atk_name,
                                           map_1[i], map_2[i], ptb_np[i]])
 
-    if get_saliency_maps:
+    if get_maps:
         return results, saliency_maps
     else:
         return results
 
 
-def attack_test(configs, attackers, model, raw_images,
-                get_saliency_maps=False):
+def attack_test(model, batch,
+                configs, attackers,
+                get_maps=False):
     '''construct attacks'''
     attacks = []
-    images = torch.stack([transf(x) for x in raw_images]).cuda()
+    image_batch = torch.stack([transf(x) for x in image_batch]).cuda()
     for atk_name, atk in attackers:
-        perturbed, delta = atk.attack(images.clone())
+        perturbed, delta = atk.attack(image_batch.clone())
         ptb_np = perturbed.cpu().numpy()
         attacks.append((atk_name, perturbed, delta, ptb_np))
 
     '''run saliency methods'''
     results = []
     saliency_maps = []
-    batch_size = images.shape[0]
+    batch_size = image_batch.shape[0]
     for mth_name, kwargs in configs:
         explainer = get_explainer(model, mth_name, kwargs)
-        inputs = Variable(images.clone().cuda(), requires_grad=True)
+        inputs = Variable(image_batch.clone().cuda(), requires_grad=True)
         saliency_1 = explainer.explain(inputs)
         map_1 = saliency_1.cpu().numpy()
 
@@ -439,17 +451,17 @@ def attack_test(configs, attackers, model, raw_images,
 
             for i in range(batch_size):
                 results.append([mth_name, atk_name] + scores[i])
-                if get_saliency_maps:
+                if get_maps:
                     saliency_maps.append([i, mth_name, atk_name,
                                           map_1[i], map_2[i], ptb_np[i]])
 
-    if get_saliency_maps:
+    if get_maps:
         return results, saliency_maps
     else:
         return results
 
 
-def setup_imagenet(batch_size):
+def setup_imagenet(batch_size=16, n_batches=-1, n_images=-1):
 
     def batch_loader(image_files):
         return [viz.pil_loader(x) for x in image_files]
@@ -458,19 +470,25 @@ def setup_imagenet(batch_size):
     image_files = list(glob.iglob(image_path, recursive=True))
     np.random.seed(0)
     np.random.shuffle(image_files)
+
+    if n_images > 0:
+        image_files = image_files[:n_images]
+    elif n_batches > 0:
+        image_files = image_files[:batch_size * n_batches]
+
     batch_indices = list(range(0, len(image_files), batch_size))
-    image_files = [image_files[i: i + batch_size] for i in batch_indices]
-    image_batches = map(batch_loader, image_files)
-    n_batches = len(image_files)
-    print('image path loaded', n_batches)
+    batch_files = [image_files[i: i + batch_size] for i in batch_indices]
+    batches = map(batch_loader, batch_files)
+    print('image path loaded', len(batch_files))
 
     model = utils.load_model('resnet50')
     model.eval()
     model.cuda()
     print('model loaded')
 
-    transf = get_preprocess('resnet50', 'sparse')
-    return image_batches, n_batches, model, transf
+
+
+    return batches, model, transf
 
 
 def setup_cifar10(batch_size):
@@ -492,70 +510,17 @@ def setup_cifar10(batch_size):
     model.eval()
     print('model loaded')
 
-    def null(x):
-        return x
-
-    # transf = get_preprocess('resnet50', 'sparse', 'cifar10')
-    return batches, n_batches, model, null
+    return batches, n_batches, model
 
 
-image_batches, n_batches, model, transf = setup_imagenet(16)
-EPSILON = 2 / 255
-GHO_K = int(1e4)
-# image_batches, n_batches, model, transf = setup_cifar10(16)
-# EPSILON = 16 / 255
-# GHO_K = 400
-TIMES_INPUT = False
+def run_attack_short(n_batches, configs, attackers):
+    batches, model = setup_imagenet(n_batches=n_batches)
 
-
-attackers = [
-    ('gho',
-     GhorbaniAttack(
-         model,
-         lambda_t1=0,
-         lambda_t2=1,
-         lambda_l1=0,
-         lambda_l2=0,
-         n_iterations=30,
-         optim='sgd',
-         lr=1e-2,
-         epsilon=EPSILON,
-         const_k=GHO_K,
-         topk_agg=lambda x: np.abs(x),
-         # topk_agg=lambda x: np.abs(x).sum(1),
-     )),
-    # ('fgsm', FGSM(model, epsilon=EPSILON, n_iterations=10)),
-    # ('rnd', NoiseAttack(epsilon=EPSILON)),
-    ('srnd', ScaledNoiseAttack(epsilon=EPSILON)),
-]
-
-
-configs = [
-    ('sparse zero',
-     {
-         'lambda_t1': 1,
-         'lambda_t2': 1,
-         'lambda_l1': 100,
-         'lambda_l2': 1e4,
-         'n_iterations': 10,
-         'optim': 'sgd',
-         'lr': 0.1,
-         'times_input': TIMES_INPUT,
-         'init': 'zero',
-     }),
-    ('vanilla_grad', None),
-    ('smooth_grad', None),
-    ('integrate_grad', None),
-]
-
-
-def run_attack_short(n_batches):
     results = []
-    for batch_idx, batch in enumerate(image_batches):
-        if batch_idx >= n_batches:
-            break
-        # scores = attack_test(configs, attackers, model, batch)
-        scores = attack_with_saliency_test(configs, attackers, model, batch)
+    for batch_idx, batch in enumerate(batches):
+        batch = torch.stack([transf(x) for x in batch]).cuda()
+        # scores = attack_test(model, batch, configs, attackers)
+        scores = attack_batch_with_saliency(model, batch, configs, attackers)
         results += scores
     n_scores = len(results[0]) - 2  # number of different scores
     columns = (
@@ -570,8 +535,8 @@ def run_attack_short(n_batches):
     #     df = df.append(pd.DataFrame(json.load(f)), ignore_index=True)
 
 
-def run_attack_long():
-    results = []
+def run_attack_long(configs, attackers):
+    batches, model = setup_imagenet()
 
     def check():
         n_scores = len(results[0]) - 2  # number of different scores
@@ -585,21 +550,24 @@ def run_attack_long():
         df = df.groupby(['attack', 'method']).mean()
         # print(df)
 
-    for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
+    results = []
+    for batch_idx, batch in enumerate(tqdm(batches)):
         if batch_idx % 20 == 0 and batch_idx > 0:
             check()
             results = []
-        results += attack_test(configs, attackers, model, batch)
+        batch = torch.stack([transf(x) for x in batch]).cuda()
+        results += attack_test(model, batch, configs, attackers)
     if len(results) > 0:
         check()
 
 
-def run_histogram(n_batches):
+def run_histogram(n_batches, configs):
+    batches, model = setup_imagenet(n_batches=n_batches)
+
     results = []
-    for batch_idx, batch in enumerate(tqdm(image_batches, total=n_batches)):
-        if batch_idx >= n_batches:
-            break
-        results += saliency_histogram(configs, model, batch)
+    for batch_idx, batch in enumerate(tqdm(batches)):
+        batch = torch.stack([transf(x) for x in batch]).cuda()
+        results += saliency_histogram(model, batch, configs)
     columns = (
         ['method', 'channel', 'saliency']
     )
@@ -628,48 +596,43 @@ def name_conv(name):
     return conv[name]
 
 
-def get_saliency_maps(n_images, configs, attackers):
+def get_saliency_maps(model, batches, configs, attackers):
     maps = []
     images = []
-    cnt = 0
-    for batch_idx, batch in enumerate(image_batches):
-        batch = batch[:n_images]  # hacky way of handling small n
-        _, _maps = attack_with_saliency_test(configs, attackers, model, batch,
-                                             get_saliency_maps=True)
-        for i, _ in enumerate(_maps):
-            _maps[i][0] += len(maps)
-        maps += _maps
+    for batch_idx, batch in enumerate(batches):
         images += batch
-        cnt += len(batch)
-        if cnt >= n_images:
-            break
+        _, smaps = attack_batch_with_saliency(
+            model, batch, configs, attackers, get_maps=True)
+        for i, _ in enumerate(smaps):
+            smaps[i][0] += len(maps)
+        maps += smaps
     return maps, images
 
 
 def figures(n_images):
-    maps, images = get_saliency_maps(n_images, configs, attackers)
-    all_saliency_maps = dict()
+    batches, model = setup_imagenet(n_images=n_images)
+
+    maps, images = get_saliency_maps(batches, configs, attackers)
+    all_saliency_maps = defaultdict(dict)
     image_labels = dict()
-    for batch_idx, mth, atk, map1, map2, ptb in maps:
+    for idx, mth, atk, map1, map2, ptb in maps:
+        label = 'label'
+        image_labels[idx] = label
+
         map1 = viz.VisualizeImageGrayscale(
-            torch.FloatTensor(np.array(map1)).unsqueeze(0))
-        map1 = map1.squeeze(0).numpy()
+            torch.FloatTensor(map1).unsqueeze(0)).squeeze().numpy()
 
         map2 = viz.VisualizeImageGrayscale(
-            torch.FloatTensor(np.array(map2)).unsqueeze(0))
-        map2 = map2.squeeze(0).numpy()
+            torch.FloatTensor(map2).unsqueeze(0)).squeeze(0).numpy()
 
         ptb = np.array(ptb).swapaxes(0, 2).swapaxes(0, 1)
         ptb = np.uint8(ptb * 255)
-        # TODO
-        if batch_idx not in all_saliency_maps:
-            all_saliency_maps[batch_idx] = dict()
+
         atk = name_conv(atk)
         mth = name_conv(mth)
-        all_saliency_maps[batch_idx][(atk, mth)] = {
-            'label': 'label', 'pred1': 'pred1', 'pred2': 'pred2',
+        all_saliency_maps[idx][(atk, mth)] = {
+            'label': label, 'pred1': 'pred1', 'pred2': 'pred2',
             'map1': map1, 'map2': map2, 'ptb': ptb}
-        image_labels[batch_idx] = 'label'
 
     methods = [name_conv(x[0]) for x in configs]
     attacks = [name_conv(x[0]) for x in attackers]
@@ -778,17 +741,25 @@ def figures(n_images):
 
 def figure_config_attack(configs, attackers, filename, n_images):
     '''x-axis is configs, y is attacks'''
-    maps, images = get_saliency_maps(n_images, configs, attackers)
+    images = []
+    for i, x in enumerate(raw_images_files):
+        if i >= n_images:
+            break
+        images.append(x)
+    maps, images = get_saliency_maps(images, configs, attackers)
     all_saliency_maps = dict()
     image_labels = dict()
     for batch_idx, mth, atk, map1, map2, ptb in maps:
         map1 = viz.VisualizeImageGrayscale(
-            torch.FloatTensor(np.array(map1)).unsqueeze(0))
+            torch.FloatTensor(map1).unsqueeze(0))
         map1 = map1.squeeze(0).numpy()
 
         map2 = viz.VisualizeImageGrayscale(
-            torch.FloatTensor(np.array(map2)).unsqueeze(0))
+            torch.FloatTensor(map2).unsqueeze(0))
         map2 = map2.squeeze(0).numpy()
+
+        # map1 = np.abs(map1).sum(0)
+        # map2 = np.abs(map2).sum(0)
 
         ptb = np.array(ptb).swapaxes(0, 2).swapaxes(0, 1)
         ptb = np.uint8(ptb * 255)
@@ -849,43 +820,160 @@ default_sparse_config = {
         'n_iterations': 10,
         'optim': 'sgd',
         'lr': 0.1,
-        'times_input': TIMES_INPUT,
+        'times_input': False,
         'init': 'zero',
     }
 
 
-def figure_l2_attack(n_images):
+def figure_config_attack_three(n_images):
+    method = 'sparse'
+
     configs = []
     for lambda_l2 in [0, 1, 10, 1e2, 1e3, 1e4, 1e5]:
         config = default_sparse_config.copy()
         config.update({'lambda_l2': lambda_l2})
-        configs.append(('sparse (l2={})'.format(lambda_l2), config))
+        configs.append(('{} (l2={})'.format(method, lambda_l2), config))
     figure_config_attack(configs, attackers,
-                         'figures/figure_l2_attack.pdf',
+                         'figures/figure_l2_attack_{}.pdf'.format(method),
                          n_images)
 
-
-def figure_l1_attack(n_images):
     configs = []
     for lambda_l1 in [0, 1, 10, 1e2, 1e3, 1e4, 1e5]:
         config = default_sparse_config.copy()
         config.update({'lambda_l1': lambda_l1})
-        configs.append(('sparse (l1={})'.format(lambda_l1), config))
+        configs.append(('{} (l1={})'.format(method, lambda_l1), config))
     figure_config_attack(configs, attackers,
-                         'figures/figure_l1_attack.pdf',
+                         'figures/figure_l1_attack_{}.pdf'.format(method),
                          n_images)
 
-
-def figure_niter_attack(n_images):
     configs = []
     for n_iterations in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]:
         config = default_sparse_config.copy()
         config.update({'n_iterations': n_iterations})
-        configs.append(('sparse (niter={})'.format(n_iterations), config))
+        configs.append(('{} (niter={})'.format(method, n_iterations), config))
     figure_config_attack(configs, attackers,
-                         'figures/figure_niter_attack.pdf',
+                         'figures/figure_niter_{}.pdf'.format(method),
                          n_images)
 
 
+def loss_history(n_images):
+    method = 'sparse'
+    # method = 'robust_sparse'
+    config = default_sparse_config.copy()
+    config['n_iterations'] = 30
+    config['lambda_l2'] = 1e6
+    config['lambda_t2'] = 10
+    explainer = get_explainer(model, method, config)
+    batch = [next(image_batches)[0]]
+    images = torch.stack([transf(x) for x in batch]).cuda()
+    inputs = Variable(images.clone().cuda(), requires_grad=True)
+    saliency_1 = explainer.explain(inputs)
+    checkpoint = {'original': pd.DataFrame(explainer.history)}
+
+    for atk_name, atk in attackers:
+        perturbed, delta = atk.attack_with_saliency(images.clone(),
+                                                    saliency_1.clone())
+        inputs = Variable(perturbed.cuda(), requires_grad=True)
+        explainer.explain(inputs)
+        checkpoint[atk_name] = pd.DataFrame(explainer.history)
+
+    with open('loss_history_{}.pkl'.format(method), 'wb') as f:
+        pickle.dump(checkpoint, f)
+
+
 if __name__ == '__main__':
-    run_attack_short(n_batches=3)
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--task', type=str)
+    parser.add_argument('--n', type=int)
+    tasks = {
+        'attack': run_attack_short,
+        'figure': figures,
+        'history': loss_history,
+        'matrix': figure_config_attack_three,
+    }
+    args = parser.parse_args()
+    tasks[args.task](args.n)
+
+    global transf
+    transf = transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+        ])
+    # transf = transforms.ToTensor()
+
+    attackers = [
+        ('gho',
+         GhorbaniAttack(
+             model,
+             lambda_t1=0,
+             lambda_t2=1,
+             lambda_l1=0,
+             lambda_l2=0,
+             n_iterations=30,
+             optim='sgd',
+             lr=1e-2,
+             epsilon=EPSILON,
+             const_k=GHO_K,
+             topk_agg=lambda x: np.abs(x),
+             # topk_agg=lambda x: np.abs(x).sum(1),
+         )),
+        # ('fgsm', FGSM(model, epsilon=EPSILON, n_iterations=10)),
+        # ('rnd', NoiseAttack(epsilon=EPSILON)),
+        ('srnd', ScaledNoiseAttack(epsilon=EPSILON)),
+    ]
+    
+    
+    configs = [
+        ('sparse zero',
+         {
+             'lambda_t1': 1,
+             'lambda_t2': 1,
+             'lambda_l1': 100,
+             'lambda_l2': 1e4,
+             'n_iterations': 10,
+             'optim': 'sgd',
+             'lr': 0.1,
+             'times_input': False,
+             'init': 'zero',
+         }),
+        ('robust_sparse 1',
+         {
+             'lambda_t1': 1,
+             'lambda_t2': 1,
+             'lambda_l1': 100,
+             'lambda_l2': 1e4,
+             'n_iterations': 10,
+             'optim': 'sgd',
+             'lr': 0.1,
+             'times_input': False,
+             'init': 'zero',
+         }),
+        ('robust_sparse 2',
+         {
+             'lambda_t1': 1,
+             'lambda_t2': 1,
+             'lambda_l1': 100,
+             'lambda_l2': 1e5,
+             'n_iterations': 10,
+             'optim': 'sgd',
+             'lr': 0.1,
+             'times_input': False,
+             'init': 'zero',
+         }),
+        ('robust_sparse 3',
+         {
+             'lambda_t1': 1,
+             'lambda_t2': 1,
+             'lambda_l1': 100,
+             'lambda_l2': 1e6,
+             'n_iterations': 10,
+             'optim': 'sgd',
+             'lr': 0.1,
+             'times_input': False,
+             'init': 'zero',
+         }),
+        ('vanilla_grad', None),
+        ('smooth_grad', None),
+        ('integrate_grad', None),
+    ]
