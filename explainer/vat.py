@@ -1,6 +1,5 @@
 import contextlib
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 
@@ -11,7 +10,7 @@ def _disable_tracking_bn_stats(model):
     def switch_attr(m):
         if hasattr(m, 'track_running_stats'):
             m.track_running_stats ^= True
-            
+
     model.apply(switch_attr)
     yield
     model.apply(switch_attr)
@@ -31,7 +30,7 @@ def _kl_div(log_probs, probs):
 
 class VATExplainer:
 
-    def __init__(self, model, xi=1e-6, n_iterations=1):
+    def __init__(self, model, xi=1e-6, n_iterations=1, times_input=False):
         """VAT loss
         :param xi: hyperparameter of VAT (default: 10.0)
         :param n_iterations: number of iterations (default: 1)
@@ -39,6 +38,7 @@ class VATExplainer:
         self.model = model
         self.xi = xi
         self.n_iterations = n_iterations
+        self.times_input = times_input
 
     def explain(self, x, ind=None):
         output = self.model(x)
@@ -57,4 +57,6 @@ class VATExplainer:
             adv_loss = F.cross_entropy(pred_hat, ind)
             d_grad, = torch.autograd.grad(adv_loss, d)
             d = _l2_normalize(d_grad.data)
+        if self.times_input:
+            d *= x.data
         return d

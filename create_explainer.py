@@ -26,6 +26,7 @@ def get_explainer(model, name, extra_args):
         'contrastive_excitation_backprop': ebp.ContrastiveExcitationBackpropExplainer,
         'real_time_saliency': rt.RealTimeSaliencyExplainer,
         'sparse': sparse.SparseExplainer,
+        'robust_sparse': sparse.RobustSparseExplainer,
         'sparse_integrate_grad': bp.SparseIntegrateGradExplainer,
         'sparse_guided_backprop': bp.SparseGuidedBackpropExplainer,
         'vat': vat.VATExplainer,
