@@ -43,7 +43,7 @@ def aggregate(x):
         vmax = np.expand_dims(np.percentile(x, 98, axis=1), 1)
         vmin = np.expand_dims(np.min(x, axis=1), 1)
         x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
-        x = x.view(batch_size, height, width)
+        x = x.reshape(batch_size, height, width)
     elif x.ndim == 3:
         n_chs, height, width = x.shape
         x = np.abs(x).sum(0)
@@ -51,7 +51,7 @@ def aggregate(x):
         vmax = np.percentile(x, 98)
         vmin = np.min(x)
         x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
-        x = x.view(height, width)
+        x = x.reshape(height, width)
     return x
 
 
