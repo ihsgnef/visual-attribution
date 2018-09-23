@@ -17,11 +17,11 @@ def main():
         #['resnet50', 'guided_backprop', 'imshow', None],
         #['resnet50', 'deeplift_rescale', 'imshow', None],
         #['resnet50', 'sparse', 'imshow', None],       
-        ['softplus50', 'smooth_grad', 'imshow', None],
-        ['softplus50', 'integrate_grad', 'imshow',None],
-        ['softplus50', 'guided_backprop', 'imshow', None],
-        ['softplus50', 'deeplift_rescale', 'imshow', None],
-        ['softplus50', 'sparse', 'imshow', None], 
+        ['resnet18', 'robust_sparse', 'imshow', None],
+        #['softplus50', 'integrate_grad', 'imshow',None],
+        #['softplus50', 'guided_backprop', 'imshow', None],
+        #['softplus50', 'deeplift_rescale', 'imshow', None],
+        ['resnet18', 'vanilla_grad', 'imshow', None], 
    #     ['resnet18', 'sparse_smooth_grad', 'imshow', None],
    #     ['resnet18', 'sparse_integrate_grad', 'imshow',None],
    #     ['resnet18', 'sparse_guided_backprop', 'imshow', None],
@@ -35,7 +35,7 @@ def main():
         # ['resnet50', 'real_time_saliency', 'camshow', None],
         ]
 
-    image_path = 'examples/fox.png'
+    image_path = 'examples/tricycle.png'
     raw_img = viz.pil_loader(image_path)
     all_saliency_maps = []
     for model_name, method_name, _, kwargs in model_methods:
@@ -49,7 +49,7 @@ def main():
         inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
 
         saliency = explainer.explain(inp, None)
-        saliency = viz.VisualizeImageGrayscale(saliency)            
+        saliency = viz.VisualizeImageGrayscale(saliency.cpu())            
         all_saliency_maps.append(saliency.cpu().numpy()[0])
 
     plt.figure(figsize=(25, 15))
