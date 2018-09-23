@@ -12,7 +12,7 @@ import torchvision.transforms as transforms
 import torch.nn.functional as F
 import torchvision
 
-batch_size = 32
+batch_size = 16
 
 def perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     output = model(X)
@@ -77,7 +77,7 @@ def run_protected(inputs, cutoff):
     scores = dict()
     for method_name, kwargs in configs:
         if method_name == "random":
-            saliency = torch.from_numpy(np.random.rand(len(inputs),3,32,32)).cuda()
+            saliency = torch.from_numpy(np.random.rand(*inputs.shape)).cuda()
             saliency = viz.VisualizeImageGrayscale(saliency.cpu())
             protected_region = attackUnImportant(saliency.cpu().numpy(), cutoff=cutoff)
         else:
@@ -94,14 +94,16 @@ def run_protected(inputs, cutoff):
     return scores
 
 if __name__ == '__main__':
-    dataset = 'cifar10'
+    #dataset = 'cifar10'
+    dataset = 'imagenet'
     transf = get_preprocess('resnet50', 'sparse',dataset)
-    model = utils.load_model('cifar50')
+    #model = utils.load_model('cifar50')
+    model = utils.load_model('resnet50')
     model.cuda()
     model.eval()
 
-    cutoffs = [60,70]#0,10,20,30,40,50,60,70,80,90] # percentage adversary can see
-    num_images = 32
+    cutoffs = [10,20,60,70]#0,10,20,30,40,50,60,70,80,90] # percentage adversary can see
+    num_images = 16
     for cutoff in cutoffs:
         batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
         all_scores = None
