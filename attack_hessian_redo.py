@@ -18,7 +18,8 @@ import viz
 import utils
 from explainers_redo import zero_grad
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
-    VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer
+    VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
+    LambdaTunerExplainer
 
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -484,9 +485,10 @@ def plot_explainer_attacker(n_examples):
 
     explainers = [
         ('Sparse', SparseExplainer()),
+        ('Tuned_Sparse', LambdaTunerExplainer()),
         ('Vanilla', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        # ('SmoothGrad', SmoothGradExplainer()),
+        # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
     model, batches = setup_imagenet(n_examples=n_examples)

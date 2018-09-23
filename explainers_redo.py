@@ -225,6 +225,67 @@ class RobustSparseExplainer(SparseExplainer):
             delta *= x.data
         return delta
 
+class LambdaTunerExplainer:
+    def __init__(self):        
+        base_explainer = SparseExplainer()
+        self.base_explainer = base_explainer        
+
+    def explain(self, model, x):        
+        best_median = 0                
+        current_lambda1 = 0
+        current_lambda2 = 0
+
+        # get explanation
+        saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+        # compute median difference
+        saliency = saliency.ravel()
+        topk = np.argsort(-s)[:int(saliency.size * 0.02)]
+        botk = np.argsort(s)[:int(saliency.size * 0.98)]
+        top_median = np.median(s[topk])
+        bot_median = np.median(s[botk])
+        current_median = top_median - bot_median
+
+
+        # Need to start at non-zero because 10*0 = 0
+        current_lambda1 = 0.1
+        current_lambda2 = 1
+        increase_rate = 10  # multiply by 10 here
+
+        # lambda_l1 search
+        while (current_median > best_median):
+            best_median = current_median # update best median
+            current_lambda1 = current_lambda1 * increase_rate
+
+            # get explanation
+            saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+            # compute median difference
+            s = saliency.ravel()
+            topk = np.argsort(-s)[:int(s.size * 0.02)]
+            botk = np.argsort(s)[:int(s.size * 0.98)]
+            top_median = np.median(s[topk])
+            bot_median = np.median(s[botk])
+            current_median = top_median - bot_median
+
+        current_lambda1 = current_lambda1 / increase_rate # because current_median is one too far here        
+        while (current_median > best_median):
+            best_median = current_median # update best median
+            current_lambda_l2 = current_lambda_l2 * increase_rate
+
+            # get explanation
+            saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+            # compute median difference
+            s = saliency.ravel()
+            topk = np.argsort(-s)[:int(s.size * 0.02)]
+            botk = np.argsort(s)[:int(s.size * 0.98)]
+            top_median = np.median(s[topk])
+            bot_median = np.median(s[botk])
+            current_median = top_median - bot_median
+    
+        current_lambda2 = current_lambda2 / increase_rate # because current_median is one too far here        
+        saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+
+        return saliency
+
 
 class VanillaGradExplainer:
 
