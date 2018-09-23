@@ -28,8 +28,8 @@ class SparseExplainer:
     def __init__(self,
                  lambda_t1=1,
                  lambda_t2=1,
-                 lambda_l1=1e4,
-                 lambda_l2=1e5,
+                 lambda_l1=1e2,
+                 lambda_l2=0,
                  n_iter=10,
                  # optim='sgd',
                  # lr=0.1,
@@ -254,8 +254,9 @@ class VanillaGradExplainer:
 
 
 class IntegrateGradExplainer(VanillaGradExplainer):
-    def __init__(self, n_iter=100):
+    def __init__(self, n_iter=100, times_input=False):
         self.n_iter = n_iter
+        self.times_input = times_input
 
     def explain(self, model, x):
         grad = 0
@@ -266,18 +267,21 @@ class IntegrateGradExplainer(VanillaGradExplainer):
             y = output.max(1)[1]
             g = self.get_input_grad(x_var, output, y)
             grad += g.data
-        return grad * x_data / self.n_iter
+        if self.times_input:
+            grad *= x_data
+        return grad / self.n_iter
 
 
 class SmoothGradExplainer(object):
     def __init__(self, base_explainer=None, stdev_spread=0.15,
-                 nsamples=25, magnitude=True):
+                 nsamples=25, magnitude=True, times_input=False):
         if base_explainer is None:
             base_explainer = VanillaGradExplainer()
         self.base_explainer = base_explainer
         self.stdev_spread = stdev_spread
         self.nsamples = nsamples
         self.magnitude = magnitude
+        self.times_input = times_input
 
     def explain(self, model, x):
         stdev = self.stdev_spread * (x.max() - x.min())
@@ -290,4 +294,7 @@ class SmoothGradExplainer(object):
                 total_gradients += grad ** 2
             else:
                 total_gradients += grad
-        return total_gradients / self.nsamples
+        total_gradients /= self.nsamples
+        if self.times_input:
+            total_gradients *= x
+        return total_gradients

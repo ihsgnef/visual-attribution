@@ -484,7 +484,6 @@ def plot_explainer_attacker(n_examples):
 
     explainers = [
         ('Sparse', SparseExplainer()),
-        ('Robust', RobustSparseExplainer()),
         ('Vanilla', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -525,12 +524,12 @@ def plot_explainer_attacker(n_examples):
 
 
 def plot_l1_l2(n_examples):
-    # attackers = [
-    #     ('Original', EmptyAttack()),
-    #     # ('Ghorbani', GhorbaniAttack()),
-    # ]
+    attackers = [
+        # ('Original', EmptyAttack()),
+        ('Ghorbani', GhorbaniAttack()),
+    ]
 
-    l1s = [1, 10, 50, 1e2, 1e3, 1e4, 1e5]
+    l1s = [0, 0.1, 0.5, 1, 10, 50, 1e2]
     l2s = [0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8]
 
     explainers = []
@@ -541,17 +540,17 @@ def plot_l1_l2(n_examples):
                 ((l1, l2), SparseExplainer(lambda_l1=l1, lambda_l2=l2)))
 
     model, batches = setup_imagenet(n_examples=n_examples)
-    # results, ids, images, labels = get_attack_saliency_maps(
-    #     model, batches, explainers, attackers)
-    results, ids, images, labels = get_saliency_maps(
-        model, batches, explainers)
+    results, ids, images, labels = get_attack_saliency_maps(
+        model, batches, explainers, attackers)
+    # results, ids, images, labels = get_saliency_maps(
+    #     model, batches, explainers)
     assert len(results) == n_examples
     resize = transforms.Resize((224, 224))
     # construct the matrix to be plotted
     matrix = []
     ids = sorted(ids)  # ordered by real ids
     for idx in ids:
-        # attacker = attackers[0][0]
+        attacker = attackers[0][0]
         image = resize(images[idx])
         for i, l2 in enumerate(l2s):
             row = [{
@@ -562,8 +561,8 @@ def plot_l1_l2(n_examples):
             for l1 in l1s:
                 # only show explainer label on top of the row of original
                 # example without perturbation
-                # cell = results[idx][(attacker, (l1, l2))]
-                cell = results[idx][(l1, l2)]
+                cell = results[idx][(attacker, (l1, l2))]
+                # cell = results[idx][(l1, l2)]
                 saliency = cell['saliency_1']
                 s = saliency.ravel()
                 topk = np.argsort(-s)[:int(s.size * 0.02)]
@@ -606,7 +605,7 @@ def plot_histogram_l1(n_examples):
 
     with open('histogram_l1.pkl', 'wb') as f:
         pickle.dump(df, f)
-        
+
 
 if __name__ == '__main__':
     import argparse
