@@ -247,9 +247,9 @@ class LambdaTunerExplainer:
         current_median_difference = get_median_difference(saliency)
         print('lambda_1', current_lambda1, 'lambda_2', current_lambda2, 'current_median_difference', current_median_difference)        
 
-        current_lambda1 = 0.01 # Need to start at non-zero because 10*0 = 0
+        current_lambda1 = 0.05 # Need to start at non-zero because 10*0 = 0
         # also note these values are multiplied by 10 immediately
-        current_lambda2 = 1#10
+        current_lambda2 = 100#10
         increase_rate = 2#10  # multiply by 10 each time
 
         # lambda_l1 search
