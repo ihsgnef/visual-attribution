@@ -15,13 +15,14 @@ def load_model(arch):
         arch: (string) valid torchvision model name,
             recommendations 'vgg16' | 'googlenet' | 'resnet50'
     '''
+    print(arch)
     if arch == 'softplus50':
         from resnet import resnet50
         model = resnet50()
         model = torch.nn.DataParallel(model).cuda()
         checkpoint = torch.load('checkpoint.pth.tar')
         model.load_state_dict(checkpoint['state_dict'])       
-    if arch == 'cifar50':
+    elif arch == 'cifar50':
         from cifar.models import cifar_resnet
         model = cifar_resnet.cifar_ResNet50()
         # net = DenseNet121()
