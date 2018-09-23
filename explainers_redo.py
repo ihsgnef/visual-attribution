@@ -28,11 +28,13 @@ class SparseExplainer:
     def __init__(self,
                  lambda_t1=1,
                  lambda_t2=1,
-                 lambda_l1=1e-1,
-                 lambda_l2=1e4,
+                 lambda_l1=1e2,
+                 lambda_l2=0,
                  n_iter=10,
-                 optim='sgd',
-                 lr=0.1,
+                 # optim='sgd',
+                 # lr=0.1,
+                 optim='adam',
+                 lr=1e-4,
                  init='zero',
                  times_input=False,
                  ):
@@ -146,11 +148,13 @@ class RobustSparseExplainer(SparseExplainer):
     def __init__(self,
                  lambda_t1=1,
                  lambda_t2=1,
-                 lambda_l1=1e-1,
-                 lambda_l2=1e4,
+                 lambda_l1=1e4,
+                 lambda_l2=1e5,
                  n_iter=10,
-                 optim='sgd',
-                 lr=0.1,
+                 # optim='sgd',
+                 # lr=0.1,
+                 optim='adam',
+                 lr=1e-4,
                  init='zero',
                  times_input=False,
                  ):
@@ -221,6 +225,67 @@ class RobustSparseExplainer(SparseExplainer):
             delta *= x.data
         return delta
 
+class LambdaTunerExplainer:
+    def __init__(self):        
+        base_explainer = SparseExplainer()
+        self.base_explainer = base_explainer        
+
+    def explain(self, model, x):        
+        best_median = 0                
+        current_lambda1 = 0
+        current_lambda2 = 0
+
+        # get explanation
+        saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+        # compute median difference
+        saliency = saliency.ravel()
+        topk = np.argsort(-s)[:int(saliency.size * 0.02)]
+        botk = np.argsort(s)[:int(saliency.size * 0.98)]
+        top_median = np.median(s[topk])
+        bot_median = np.median(s[botk])
+        current_median = top_median - bot_median
+
+
+        # Need to start at non-zero because 10*0 = 0
+        current_lambda1 = 0.1
+        current_lambda2 = 1
+        increase_rate = 10  # multiply by 10 here
+
+        # lambda_l1 search
+        while (current_median > best_median):
+            best_median = current_median # update best median
+            current_lambda1 = current_lambda1 * increase_rate
+
+            # get explanation
+            saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+            # compute median difference
+            s = saliency.ravel()
+            topk = np.argsort(-s)[:int(s.size * 0.02)]
+            botk = np.argsort(s)[:int(s.size * 0.98)]
+            top_median = np.median(s[topk])
+            bot_median = np.median(s[botk])
+            current_median = top_median - bot_median
+
+        current_lambda1 = current_lambda1 / increase_rate # because current_median is one too far here        
+        while (current_median > best_median):
+            best_median = current_median # update best median
+            current_lambda_l2 = current_lambda_l2 * increase_rate
+
+            # get explanation
+            saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+            # compute median difference
+            s = saliency.ravel()
+            topk = np.argsort(-s)[:int(s.size * 0.02)]
+            botk = np.argsort(s)[:int(s.size * 0.98)]
+            top_median = np.median(s[topk])
+            bot_median = np.median(s[botk])
+            current_median = top_median - bot_median
+    
+        current_lambda2 = current_lambda2 / increase_rate # because current_median is one too far here        
+        saliency = self.base_explainer.explain(model, x, lambda_l1=current_lambda1,lambda_l2=current_lambda2)
+
+        return saliency
+
 
 class VanillaGradExplainer:
 
@@ -250,8 +315,9 @@ class VanillaGradExplainer:
 
 
 class IntegrateGradExplainer(VanillaGradExplainer):
-    def __init__(self, n_iter=100):
+    def __init__(self, n_iter=100, times_input=False):
         self.n_iter = n_iter
+        self.times_input = times_input
 
     def explain(self, model, x):
         grad = 0
@@ -262,18 +328,21 @@ class IntegrateGradExplainer(VanillaGradExplainer):
             y = output.max(1)[1]
             g = self.get_input_grad(x_var, output, y)
             grad += g.data
-        return grad * x_data / self.n_iter
+        if self.times_input:
+            grad *= x_data
+        return grad / self.n_iter
 
 
 class SmoothGradExplainer(object):
     def __init__(self, base_explainer=None, stdev_spread=0.15,
-                 nsamples=25, magnitude=True):
+                 nsamples=25, magnitude=True, times_input=False):
         if base_explainer is None:
             base_explainer = VanillaGradExplainer()
         self.base_explainer = base_explainer
         self.stdev_spread = stdev_spread
         self.nsamples = nsamples
         self.magnitude = magnitude
+        self.times_input = times_input
 
     def explain(self, model, x):
         stdev = self.stdev_spread * (x.max() - x.min())
@@ -286,4 +355,7 @@ class SmoothGradExplainer(object):
                 total_gradients += grad ** 2
             else:
                 total_gradients += grad
-        return total_gradients / self.nsamples
+        total_gradients /= self.nsamples
+        if self.times_input:
+            total_gradients *= x
+        return total_gradients

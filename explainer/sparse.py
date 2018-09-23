@@ -118,17 +118,18 @@ class SparseExplainer:
             optimizer.step()
 
         delta = delta.view((batch_size, n_chs, height, width)).data
-        if self.times_input:
-            delta *= inp.data
+        #if self.times_input:
+        #    delta *= inp.data
+        delta = (delta * inp.data).abs()
         return delta
 
 
 class RobustSparseExplainer:
 
     def __init__(self, model,
-                 lambda_t1=1, lambda_t2=1,
-                 lambda_l1=1e4, lambda_l2=1e4,
-                 n_iterations=10, optim='sgd', lr=0.1,
+                 lambda_t1=0, lambda_t2=1e2,
+                 lambda_l1=0, lambda_l2=0,
+                 n_iterations=1, optim='sgd', lr=0.1,
                  times_input=False, init='zero'):
         self.model = model
         self.lambda_t1 = lambda_t1
@@ -155,6 +156,8 @@ class RobustSparseExplainer:
         return inp.grad
 
     def explain(self, inp, ind=None):
+        print(self.lambda_t1)
+        print(self.lambda_t2)        
         self.history = defaultdict(list)
         batch_size, n_chs, height, width = inp.shape
         img_size = height * width
@@ -221,6 +224,9 @@ class RobustSparseExplainer:
             optimizer.step()
 
         delta = delta.view((batch_size, n_chs, height, width)).data
-        if self.times_input:
-            delta *= inp.data
-        return delta
+        print(self.history['grad'])
+        print(self.history['hessian'])
+        return delta.abs()
+        # if self.times_input:
+        #     delta *= inp.data
+        # return delta
