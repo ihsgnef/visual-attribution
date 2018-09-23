@@ -998,4 +998,5 @@ clsid_to_human = {
  996: 'hen-of-the-woods, hen of the woods, Polyporus frondosus, Grifola frondosa',
  997: 'bolete',
  998: 'ear, spike, capitulum',
- 999: 'toilet tissue, toilet paper, bathroom tissue'}
+ 999: 'toilet tissue, toilet paper, bathroom tissue'
+}
