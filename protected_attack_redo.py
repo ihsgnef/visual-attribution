@@ -19,6 +19,39 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import pylab as P
 
+def _l2_normalize(d):
+    d_reshaped = d.view(d.shape[0], -1, *(1 for _ in range(d.dim() - 2)))
+    d /= torch.norm(d_reshaped, 2, dim=1, keepdim=True) + 1e-8
+    return d
+
+def _kl_div(log_probs, probs):
+    # pytorch KLDLoss is averaged over all dim if size_average=True
+    kld = F.kl_div(log_probs, probs, size_average=False)
+    return kld / log_probs.shape[0]
+
+
+def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
+        n_iterations = 1
+        xi = 1e-6
+
+        output = model(x)
+        ind = output.max(1)[1]
+        
+        d = torch.rand(x.shape).sub(0.5).cuda()
+        d = _l2_normalize(d)
+
+        for _ in range(n_iterations):
+            model.zero_grad()
+            d = Variable(xi * d, requires_grad=True)
+            pred_hat = model(x + d)            
+            adv_loss = F.cross_entropy(pred_hat, ind)
+            d_grad, = torch.autograd.grad(adv_loss, d)
+            d = _l2_normalize(d_grad.data)        
+        d = d.grad.data.sign() * epsilon * protected_region
+        X = torch.clamp(X, X + epsilon, X - epsilon)
+        X = torch.clamp(X, 0, 1)
+        return X
+
 def gray_out(model, X, protected=None):
         protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
         X = X.cpu().data.numpy()
@@ -182,6 +215,7 @@ if __name__ == '__main__':
     num_images = 128
 
     batch_size = 1#16
+    attack_method = 'single_step'
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
@@ -205,23 +239,23 @@ if __name__ == '__main__':
             for cutoff in cutoffs:
                 protected_region = attackImportant(saliency.cpu().numpy(), cutoff=cutoff)
 
-                #adversarial_image = single_step_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
-                # adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
-                # correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
-                
-                gray_image = gray_out(model, copy.deepcopy(inputs), protected = protected_region)
-                gray_confidence = F.softmax(model(gray_image), dim=1)
-                gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
-                # print(confidence_for_class)
-                # print(gray_confidence_for_class)
-                # print(original_prediction[0])
-                # print(gray_confidence.max(1, keepdim=True))
-                # print()
-                correct = confidence_for_class - gray_confidence_for_class
-
-                # adversarial_image = iterative_perturb(model, copy.deepcopy(inputs), protected = protected_region)
-                # adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
-                # correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
+                if attack_method == 'single_step':
+                    adversarial_image = single_step_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
+                elif attack_method == 'single_step':
+                    gray_image = gray_out(model, copy.deepcopy(inputs), protected = protected_region)
+                    gray_confidence = F.softmax(model(gray_image), dim=1)
+                    gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
+                    correct = confidence_for_class - gray_confidence_for_class
+                elif attack_method == "iterative":
+                    adversarial_image = iterative_perturb(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
+                elif attack_method == "second_order":
+                    adversarial_image = vat_attack(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
 
                 cutoff_scores[method_name][int(cutoff/10)] += float(correct / batch_size)
                             
@@ -248,18 +282,15 @@ if __name__ == '__main__':
         plt.savefig('output/protected_attack.png')
 
 
+    with open("protected_results.txt", "a") as text_file:
+        text_file.write(str(method_name) + '\n')
+        for cutoff in cutoffs:            
+            text_file.write('\n' + str(cutoff) + '\n' +'\n')
+            print("Adversary Can Modify: ", cutoff)
+            for method_name, explainer in explainers:
+                print(method_name, cutoff_scores[method_name][int(cutoff/10)] / (num_images / batch_size))
+                text_file.write(str(method_name) + '\n')
+                text_file.write(str(cutoff_scores[method_name][int(cutoff/10)] / (num_images / batch_size)) + '\n')                
+                    
 
-    for cutoff in cutoffs:
-        print("Adversary Can Modify: ", cutoff)
-        for method_name, explainer in explainers:
-            print(method_name, cutoff_scores[method_name][int(cutoff/10)] / (num_images / batch_size))
-
-        # with open("protected_results.txt", "a") as text_file:
-
-        #     text_file.write('\n' + str(cutoff) + '\n' +'\n')
-        #     for method_name in all_scores:
-        #         accuracy = all_scores[method_name] / float(num_images / batch_size)
-        #         print(method_name, accuracy)
-        #         text_file.write(str(method_name) + '\n')
-        #         text_file.write(str(accuracy) + '\n')
 
