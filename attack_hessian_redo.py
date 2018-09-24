@@ -1,17 +1,14 @@
 import os
-import json
 import glob
 import pickle
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from scipy.stats import spearmanr
 from collections import defaultdict
 
 import torch
 import torch.nn.functional as F
 from torch.autograd import Variable
-import torchvision
 import torchvision.transforms as transforms
 
 import viz
@@ -22,8 +19,6 @@ from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     LambdaTunerExplainer
 
 import matplotlib.pyplot as plt
-from PIL import Image
-from plotnine import ggplot, aes, geom_density, facet_grid
 
 
 transf = transforms.Compose([
@@ -32,28 +27,33 @@ transf = transforms.Compose([
     ])
 
 
-def aggregate(x):
-    # if x.ndim == 4:
-    #     return np.abs(x).sum(1)
-    # elif x.ndim == 3:
-    #     return np.abs(x).sum(0)
+def agg_default(x):
     if x.ndim == 4:
-        batch_size, n_chs, height, width = x.shape
-        x = np.abs(x).sum(1)
+        return np.abs(x).sum(1)
+    elif x.ndim == 3:
+        return np.abs(x).sum(0)
+
+
+def clip(x):
+    if x.ndim == 3:
+        batch_size, height, width = x.shape
         x = x.reshape(batch_size, -1)
         vmax = np.expand_dims(np.percentile(x, 98, axis=1), 1)
         vmin = np.expand_dims(np.min(x, axis=1), 1)
         x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
         x = x.reshape(batch_size, height, width)
     elif x.ndim == 3:
-        n_chs, height, width = x.shape
-        x = np.abs(x).sum(0)
+        height, width = x.shape
         x = x.ravel()
         vmax = np.percentile(x, 98)
         vmin = np.min(x)
         x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
         x = x.reshape(height, width)
     return x
+
+
+def agg_clip(x):
+    return clip(agg_default(x))
 
 
 def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
@@ -254,8 +254,8 @@ def saliency_correlation(s1, s2):
     assert s1.shape == s2.shape
     assert s1.ndim == 4
     batch_size = s1.shape[0]
-    s1 = aggregate(s1)
-    s2 = aggregate(s2)
+    s1 = agg_default(s1)
+    s2 = agg_default(s2)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
     return [spearmanr(x1, x2).correlation for x1, x2 in zip(s1, s2)]
@@ -264,8 +264,8 @@ def saliency_correlation(s1, s2):
 def saliency_overlap(s1, s2):
     assert s1.shape == s2.shape
     batch_size = s1.shape[0]
-    s1 = aggregate(s1)
-    s2 = aggregate(s2)
+    s1 = agg_default(s1)
+    s2 = agg_default(s2)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
     scores = []
@@ -277,7 +277,8 @@ def saliency_overlap(s1, s2):
     return scores
 
 
-def attack_batch(model, batch, explainers, attackers, return_saliency=False):
+def attack_batch(model, batch, explainers, attackers,
+                 return_saliency=False):
     results = []
     batch_size = batch.shape[0]
     for mth_name, explainer in explainers:
@@ -306,7 +307,8 @@ def attack_batch(model, batch, explainers, attackers, return_saliency=False):
     return results
 
 
-def setup_imagenet(batch_size=16, n_batches=-1, n_examples=-1,
+def setup_imagenet(batch_size=16, example_ids=None,
+                   n_batches=-1, n_examples=-1,
                    shuffle=True):
     model = utils.load_model('resnet50')
     model.eval()
@@ -316,6 +318,7 @@ def setup_imagenet(batch_size=16, n_batches=-1, n_examples=-1,
     image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
     image_files = list(glob.iglob(image_path, recursive=True))
     image_files = sorted(image_files, key=lambda x: os.path.basename(x))
+    real_ids = [os.path.basename(x) for x in image_files]
 
     from imagenet1000_clsid_to_human import clsid_to_human
 
@@ -324,7 +327,12 @@ def setup_imagenet(batch_size=16, n_batches=-1, n_examples=-1,
     with open(label_path) as f:
         labels = [clsid_to_human[int(x)-1] for x in f.readlines()]
 
-    examples = list(zip(range(len(labels)), image_files, labels))
+    if example_ids is not None:
+        examples = {r: (r, m, l)
+                    for r, m, l in zip(real_ids, image_files, labels)}
+        examples = [examples[x] for x in example_ids]
+    else:
+        examples = list(zip(real_ids, image_files, labels))
 
     if shuffle:
         np.random.seed(0)
@@ -392,20 +400,22 @@ def plot_matrix(matrix, filename):
             cmap = c.get('cmap', None)
             title = c.get('title', None)
             rotate_title = c.get('rotate_title', False)
+            aax = ax[i, j] if len(matrix) > 1 else ax[j]
             if image is None:
-                ax[i, j].imshow(np.zeros((244, 244)), cmap='gray')
+                aax.imshow(np.zeros((244, 244)), cmap='gray')
+                aax.imshow(np.zeros((244, 244)), cmap='gray')
             if cmap is None:
-                ax[i, j].imshow(image)
+                aax.imshow(image)
             else:
-                ax[i, j].imshow(image, cmap=cmap)
+                aax.imshow(image, cmap=cmap)
             if title is not None:
                 title_fontsize = 20
                 if rotate_title:
-                    ax[i, j].set_title(title, rotation='vertical',
-                                       x=-0.1, y=0.5, fontsize=title_fontsize)
+                    aax.set_title(title, rotation='vertical',
+                                  x=-0.05, y=0.5, fontsize=title_fontsize)
                 else:
-                    ax[i, j].set_title(c['title'], fontsize=title_fontsize)
-            ax[i, j].set_axis_off()
+                    aax.set_title(c['title'], fontsize=title_fontsize)
+            aax.set_axis_off()
     f.tight_layout()
     f.savefig(filename)
 
@@ -424,7 +434,6 @@ def get_saliency_maps(model, batches, explainers):
         xs = torch.stack([transf(x) for x in images]).cuda()
         for mth_name, explainer in explainers:
             saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
-            saliency_1 = aggregate(saliency_1)
             if hasattr(explainer, 'history'):
                 history = explainer.history
             else:
@@ -468,15 +477,13 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
             row['idx'] = ids[row['idx']]
             attacker = row['attacker']
             explainer = row['explainer']
-            row['saliency_1'] = aggregate(row['saliency_1'])
-            row['saliency_2'] = aggregate(row['saliency_2'])
             ptb = np.array(row['perturbed']).swapaxes(0, 2).swapaxes(0, 1)
             row['perturbed'] = np.uint8(ptb * 255)
             results[row['idx']][(attacker, explainer)] = row
     return results, all_ids, all_images, all_labels
 
 
-def plot_explainer_attacker(n_examples):
+def plot_explainer_attacker(n_examples, agg_func=agg_default):
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
         ('Ghorbani', GhorbaniAttack()),
@@ -514,8 +521,8 @@ def plot_explainer_attacker(n_examples):
                 # only show explainer label on top of the row of original
                 # example without perturbation
                 cell = results[idx][(attacker, explainer)]
-                s1 = cell['saliency_1']
-                s2 = cell['saliency_2']
+                s1 = agg_func(cell['saliency_1'])
+                s2 = agg_func(cell['saliency_2'])
                 row.append({
                     'image': s1 if i == 0 else s2,
                     'cmap': 'gray',
@@ -525,7 +532,7 @@ def plot_explainer_attacker(n_examples):
     plot_matrix(matrix, 'figures/explainer_attacker.pdf')
 
 
-def plot_l1_l2(n_examples):
+def plot_l1_l2(n_examples, agg_func=agg_default):
     attackers = [
         # ('Original', EmptyAttack()),
         ('Ghorbani', GhorbaniAttack()),
@@ -565,7 +572,7 @@ def plot_l1_l2(n_examples):
                 # example without perturbation
                 cell = results[idx][(attacker, (l1, l2))]
                 # cell = results[idx][(l1, l2)]
-                saliency = cell['saliency_1']
+                saliency = agg_func(cell['saliency_1'])
                 s = saliency.ravel()
                 topk = np.argsort(-s)[:int(s.size * 0.02)]
                 botk = np.argsort(s)[:int(s.size * 0.98)]
@@ -585,7 +592,7 @@ def plot_l1_l2(n_examples):
     plot_matrix(matrix, 'figures/l1_l2.pdf')
 
 
-def plot_histogram_l1(n_examples):
+def plot_histogram_l1(n_examples, agg_func=agg_default):
     l1s = [0, 0.1, 0.5, 1, 10, 100]
     explainers = []
     for l1 in l1s:
@@ -596,7 +603,8 @@ def plot_histogram_l1(n_examples):
     df_saliency, df_l1, df_idx = [], [], []
     for idx in ids:
         for l1 in l1s:
-            s = results[idx][l1]['saliency_1'].ravel().tolist()
+            s = agg_func(results[idx][l1]['saliency_1'])
+            s = s.ravel().tolist()
             df_saliency += s
             df_l1 += [l1 for _ in range(len(s))]
             df_idx += [idx for _ in range(len(s))]
@@ -609,16 +617,137 @@ def plot_histogram_l1(n_examples):
         pickle.dump(df, f)
 
 
+def plot_goose_1():
+    goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    model, batches = setup_imagenet(example_ids=[goose_id])
+    explainers = [
+        ('Sparse', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
+        # ('Sparse', LambdaTunerExplainer()),
+        ('Vanilla', VanillaGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),
+        ('IntegratedGrad', IntegrateGradExplainer()),
+    ]
+    results, ids, images, labels = get_saliency_maps(
+        model, batches, explainers)
+
+    results = results[goose_id]
+    image_input = transf(images[goose_id]).numpy()
+    raw_image = transforms.Resize((224, 224))(images[goose_id])
+
+    # 0: delta
+    # 1: clip(delta)
+    # 2: delta * input
+    # 3: clip(delta * input)
+
+    col0 = [
+        {'image': raw_image, 'title': 'Δ', 'rotate_title': True},
+        {'image': raw_image, 'title': 'clip(Δ)', 'rotate_title': True},
+        {'image': raw_image, 'title': 'Δ ⊙ input', 'rotate_title': True},
+        {'image': raw_image, 'title': 'clip(Δ ⊙ input)', 'rotate_title': True},
+    ]
+    col0 += [{'image': raw_image} for _ in range(3)]
+    matrix = [col0]
+    for mth_name, _ in explainers:
+        col = []
+        saliency = results[mth_name]['saliency_1']
+        saliency_0 = agg_default(saliency)
+        saliency_1 = agg_clip(saliency)
+        saliency_2 = agg_default(saliency * image_input)
+        saliency_3 = agg_clip(saliency * image_input)
+        col.append({'image': saliency_0, 'cmap': 'gray', 'title': mth_name})
+        col.append({'image': saliency_1, 'cmap': 'gray'})
+        col.append({'image': saliency_2, 'cmap': 'gray'})
+        col.append({'image': saliency_3, 'cmap': 'gray'})
+        matrix.append(col)
+    matrix = list(map(list, zip(*matrix)))
+    plot_matrix(matrix, 'figures/goose_1.pdf')
+
+
+def plot_goose_2_full():
+    goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    model, batches = setup_imagenet(example_ids=[goose_id])
+
+    l1s = [1, 10, 50, 100, 200]
+    l2s = ['1e2', '1e3', '1e4', '1e5', '1e6']
+
+    explainers = []
+    for l1 in l1s:
+        # use the combination as name
+        for l2 in l2s:
+            explainers.append(
+                ((l1, l2), SparseExplainer(
+                    lambda_l1=l1, lambda_l2=int(eval(l2)))))
+
+    results, ids, images, labels = get_saliency_maps(
+        model, batches, explainers)
+    matrix = []
+    image = transforms.Resize((224, 224))(images[goose_id])
+    for i, l2 in enumerate(l2s):
+        row = [{
+            'image': image,
+            'title': 'l2={}'.format(l2),
+            'rotate_title': True
+        }]
+        for l1 in l1s:
+            # only show explainer label on top of the row of original
+            # example without perturbation
+            cell = results[goose_id][(l1, l2)]
+            saliency = agg_default(cell['saliency_1'])
+            row.append({
+                'image': saliency,
+                'cmap': 'gray',
+                'title': 'l1={}'.format(l1) if i == 0 else None,
+            })
+        matrix.append(row)
+    plot_matrix(matrix, 'figures/goose_2_full.pdf')
+
+
+def plot_goose_2():
+    goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    model, batches = setup_imagenet(example_ids=[goose_id])
+
+    l1s = [1, 10, 50, 100, 200]
+    l2 = '1e4'
+
+    explainers = []
+    for l1 in l1s:
+        explainers.append((l1, SparseExplainer(
+            lambda_l1=l1, lambda_l2=int(eval(l2)))))
+
+    results, ids, images, labels = get_saliency_maps(
+        model, batches, explainers)
+    resize = transforms.Resize((224, 224))
+    image = resize(images[goose_id])
+    row = [{
+        'image': image,
+        'title': 'l2={}'.format(l2),
+        'rotate_title': True
+    }]
+    for l1 in l1s:
+        cell = results[goose_id][l1]
+        saliency = agg_default(cell['saliency_1'])
+        row.append({
+            'image': saliency,
+            'cmap': 'gray',
+            'title': 'l1={}'.format(l1)
+        })
+    matrix = [row]
+    plot_matrix(matrix, 'figures/goose_2.pdf')
+
+
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--task', type=str)
-    parser.add_argument('--n', type=int)
-    args = parser.parse_args()
-    fs = {
-        'attack': run_attack,
-        'l1l2': plot_l1_l2,
-        'attacks': plot_explainer_attacker,
-        'histogram': plot_histogram_l1,
-    }
-    fs[args.task](args.n)
+    # import argparse
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--task', type=str)
+    # parser.add_argument('--n', type=int)
+    # args = parser.parse_args()
+    # fs = {
+    #     'attack': run_attack,
+    #     'l1l2': plot_l1_l2,
+    #     'attacks': plot_explainer_attacker,
+    #     'histogram': plot_histogram_l1,
+    # }
+    # fs[args.task](args.n)
+    plot_goose_1()
+    plot_goose_2()
+    plot_goose_2_full()
