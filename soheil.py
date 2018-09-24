@@ -8,6 +8,12 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import pylab as P
 
+from explainers_redo import zero_grad
+from explainers_redo import SparseExplainer, RobustSparseExplainer, \
+    VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
+    LambdaTunerExplainer
+
+
 def main():
     model_methods = [
         #['resnet50', 'vanilla_grad', 'imshow', None],
@@ -21,7 +27,7 @@ def main():
         #['softplus50', 'integrate_grad', 'imshow',None],
         #['softplus50', 'guided_backprop', 'imshow', None],
         #['softplus50', 'deeplift_rescale', 'imshow', None],
-        ['resnet18', 'vanilla_grad', 'imshow', None], 
+        ['resnet18', 'sparse', 'imshow', None], 
    #     ['resnet18', 'sparse_smooth_grad', 'imshow', None],
    #     ['resnet18', 'sparse_integrate_grad', 'imshow',None],
    #     ['resnet18', 'sparse_guided_backprop', 'imshow', None],
@@ -35,22 +41,23 @@ def main():
         # ['resnet50', 'real_time_saliency', 'camshow', None],
         ]
 
+
     image_path = 'examples/tricycle.png'
     raw_img = viz.pil_loader(image_path)
     all_saliency_maps = []
-    for model_name, method_name, _, kwargs in model_methods:
-        print(method_name)
-        transf = get_preprocess(model_name, method_name)            
-        model = utils.load_model(model_name)            
-        model.cuda()
-        model.eval()
-        explainer = get_explainer(model, method_name, kwargs)
-        inp = transf(raw_img)
-        inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True)
+    #for model_name, method_name, _, kwargs in model_methods:
+    #    print(method_name)
+    transf = get_preprocess('softplus50', 'sparse')            
+    model = utils.load_model('softplus50')            
+    model.cuda()
+    model.eval()
+    explainer = LambdaTunerExplainer()#get_explainer(model, method_name, kwargs)
+    inp = transf(raw_img)
+    inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True).data
 
-        saliency = explainer.explain(inp, None)
-        saliency = viz.VisualizeImageGrayscale(saliency.cpu())            
-        all_saliency_maps.append(saliency.cpu().numpy()[0])
+    saliency = explainer.explain(model, inp)#, None)
+    saliency = viz.VisualizeImageGrayscale(saliency.cpu())            
+    all_saliency_maps.append(saliency.cpu().numpy()[0])
 
     plt.figure(figsize=(25, 15))
     plt.subplot(3, 5, 1)

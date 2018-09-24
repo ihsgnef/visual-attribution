@@ -63,6 +63,7 @@ if __name__ == '__main__':
         # ('Sparse', SparseExplainer()),
         # ('Tuned_Sparse', LambdaTunerExplainer()),
         ('Vanilla', VanillaGradExplainer()),
+        ('Random', None),
         ('SmoothGrad', SmoothGradExplainer()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
@@ -73,13 +74,14 @@ if __name__ == '__main__':
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100] # percentage adversary can see
     num_images = 16
+    batch_size = 16
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
         inputs = Variable(batch.cuda(), requires_grad=True)    
         original_prediction = model(inputs).max(1, keepdim=True)[1]
 
-        for explainer in explainers:
+        for method_name, explainer in explainers:
             if method_name == "random":
                 saliency = torch.from_numpy(np.random.rand(*inputs.shape)).cuda()            
             else:

@@ -29,8 +29,8 @@ class SparseExplainer:
     def __init__(self,
                  lambda_t1=1,
                  lambda_t2=1,
-                 lambda_l1=1e2,
-                 lambda_l2=0,
+                 lambda_l1=1e4,
+                 lambda_l2=1e5,
                  n_iter=10,
                  # optim='sgd',
                  # lr=0.1,
@@ -253,7 +253,7 @@ class LambdaTunerExplainer:
         increase_rate = 2#10  # multiply by 10 each time
 
         # lambda_l1 search
-        while (current_median_difference >= best_median or abs(current_median_difference - best_median) < .01):
+        while (current_median_difference >= best_median or abs(current_median_difference - best_median) < .03):
             best_median = current_median_difference # update best median
             current_lambda1 = current_lambda1 * increase_rate
             
@@ -265,7 +265,7 @@ class LambdaTunerExplainer:
         current_lambda1 = current_lambda1 / increase_rate # because current settings are one too far here        
         current_median_difference = best_median
 
-        while (current_median_difference >= best_median or abs(current_median_difference - best_median) < .01):
+        while (current_median_difference >= best_median or abs(current_median_difference - best_median) < .03):
             best_median = current_median_difference # update best median
             current_lambda2 = current_lambda2 * increase_rate
 
