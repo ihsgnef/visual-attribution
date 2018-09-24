@@ -399,6 +399,7 @@ def plot_matrix(matrix, filename):
             image = c.get('image', None)
             cmap = c.get('cmap', None)
             title = c.get('title', None)
+            yalign = c.get('yalign', 0.5)
             rotate_title = c.get('rotate_title', False)
             aax = ax[i, j] if len(matrix) > 1 else ax[j]
             if image is None:
@@ -409,10 +410,10 @@ def plot_matrix(matrix, filename):
             else:
                 aax.imshow(image, cmap=cmap)
             if title is not None:
-                title_fontsize = 20
+                title_fontsize = 40
                 if rotate_title:
-                    aax.set_title(title, rotation='vertical',
-                                  x=-0.05, y=0.5, fontsize=title_fontsize)
+                    aax.set_title(title, rotation=90,
+                                  x=-0.1, y=yalign, fontsize=title_fontsize)
                 else:
                     aax.set_title(c['title'], fontsize=title_fontsize)
             aax.set_axis_off()
@@ -636,12 +637,22 @@ def plot_goose_1(model, batches, goose_id):
     # 1: clip(delta)
     # 2: delta * input
     # 3: clip(delta * input)
+    plt.rc('text', usetex=True)
 
     col0 = [
-        {'image': raw_image, 'title': 'Δ', 'rotate_title': True},
-        {'image': raw_image, 'title': 'clip(Δ)', 'rotate_title': True},
-        {'image': raw_image, 'title': 'Δ ⊙ input', 'rotate_title': True},
-        {'image': raw_image, 'title': 'clip(Δ ⊙ input)', 'rotate_title': True},
+        {'image': raw_image, 'title': r'$\Delta$', 'rotate_title': True},
+        {'image': raw_image,
+         'title': r'clip$(\Delta)$',
+         'rotate_title': True,
+         'yalign': 0.6},
+        {'image': raw_image,
+         'title': r'$\Delta\odot x$',
+         'rotate_title': True,
+         'yalign': 0.6},
+        {'image': raw_image,
+         'title': r'clip$(\Delta\odot x)$',
+         'rotate_title': True,
+         'yalign': 0.75},
     ]
     col0 += [{'image': raw_image} for _ in range(3)]
     matrix = [col0]
@@ -732,8 +743,8 @@ def plot_goose(n):
     model, batches = setup_imagenet(example_ids=[goose_id])
     batches = list(batches)
     plot_goose_1(model, batches, goose_id)
-    plot_goose_2(model, batches, goose_id)
-    plot_goose_2_full(model, batches, goose_id)
+    # plot_goose_2(model, batches, goose_id)
+    # plot_goose_2_full(model, batches, goose_id)
 
 
 if __name__ == '__main__':
