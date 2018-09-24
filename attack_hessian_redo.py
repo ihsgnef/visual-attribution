@@ -1,8 +1,10 @@
 import os
+import json
 import glob
 import pickle
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 from scipy.stats import spearmanr
 from collections import defaultdict
 
@@ -309,7 +311,7 @@ def attack_batch(model, batch, explainers, attackers,
 
 def setup_imagenet(batch_size=16, example_ids=None,
                    n_batches=-1, n_examples=-1,
-                   shuffle=True):
+                   shuffle=True, dump_name=None):
     model = utils.load_model('resnet50')
     model.eval()
     model.cuda()
@@ -345,6 +347,11 @@ def setup_imagenet(batch_size=16, example_ids=None,
     else:
         print('using all images')
 
+    selected_files = [x[0] for x in examples]
+    if dump_name is not None:
+        with open(dump_name, 'w') as f:
+            f.write(json.dumps(selected_files))
+
     def batch_loader(batch):
         batch = list(map(list, zip(*batch)))
         ids, xs, ys = batch
@@ -357,22 +364,26 @@ def setup_imagenet(batch_size=16, example_ids=None,
     return model, batches
 
 
-def run_attack(n_batches):
+def run_attack(n_examples):
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+    n_examples = len(example_ids)
+    model, batches = setup_imagenet(example_ids=example_ids)
     attackers = [
         ('Ghorbani', GhorbaniAttack()),
         ('Random', ScaledNoiseAttack()),
     ]
 
     explainers = [
-        ('Sparse', SparseExplainer()),
-        ('Robust', RobustSparseExplainer()),
+        # ('Sparse', SparseExplainer()),
+        # ('Robust', RobustSparseExplainer()),
         ('Vanilla', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
     ]
-    model, batches = setup_imagenet(n_batches=n_batches)
     results = []
-    for batch_idx, batch in enumerate(batches):
+    n_batches = int(n_examples / 16)
+    for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
         ids, xs, ys = batch
         xs = torch.stack([transf(x) for x in xs]).cuda()
         rows = attack_batch(model, xs, explainers, attackers)
@@ -417,7 +428,7 @@ def plot_matrix(matrix, filename):
                 else:
                     aax.set_title(c['title'], fontsize=title_fontsize)
             aax.set_axis_off()
-    f.tight_layout()
+    f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
     f.savefig(filename)
 
 
@@ -640,7 +651,9 @@ def plot_goose_1(model, batches, goose_id):
     plt.rc('text', usetex=True)
 
     col0 = [
-        {'image': raw_image, 'title': r'$\Delta$', 'rotate_title': True},
+        {'image': raw_image,
+         'title': r'$\Delta$',
+         'rotate_title': True},
         {'image': raw_image,
          'title': r'clip$(\Delta)$',
          'rotate_title': True,
@@ -674,7 +687,8 @@ def plot_goose_1(model, batches, goose_id):
 
 def plot_goose_2_full(model, batches, goose_id):
     l1s = [1, 10, 50, 100, 200]
-    l2s = ['1e2', '1e3', '1e4', '1e5', '1e6']
+    l2s = [1e2, 1e3, 1e4, 1e5, 1e6]
+    l2_tex = ['10^2', '10^3', '10^4', '10^5', '10^6']
 
     explainers = []
     for l1 in l1s:
@@ -682,7 +696,7 @@ def plot_goose_2_full(model, batches, goose_id):
         for l2 in l2s:
             explainers.append(
                 ((l1, l2), SparseExplainer(
-                    lambda_l1=l1, lambda_l2=int(eval(l2)))))
+                    lambda_l1=l1, lambda_l2=l2)))
 
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -691,8 +705,9 @@ def plot_goose_2_full(model, batches, goose_id):
     for i, l2 in enumerate(l2s):
         row = [{
             'image': image,
-            'title': 'l2={}'.format(l2),
-            'rotate_title': True
+            'title': r'$\lambda_2={}$'.format(l2_tex[i]),
+            'rotate_title': True,
+            'yalign': 0.65
         }]
         for l1 in l1s:
             # only show explainer label on top of the row of original
@@ -702,7 +717,7 @@ def plot_goose_2_full(model, batches, goose_id):
             row.append({
                 'image': saliency,
                 'cmap': 'gray',
-                'title': 'l1={}'.format(l1) if i == 0 else None,
+                'title': r'$\lambda_1={}$'.format(l1) if i == 0 else None,
             })
         matrix.append(row)
     plot_matrix(matrix, 'figures/goose_2_full.pdf')
@@ -710,12 +725,12 @@ def plot_goose_2_full(model, batches, goose_id):
 
 def plot_goose_2(model, batches, goose_id):
     l1s = [1, 10, 50, 100, 200]
-    l2 = '1e4'
+    l2 = 1e4
 
     explainers = []
     for l1 in l1s:
         explainers.append((l1, SparseExplainer(
-            lambda_l1=l1, lambda_l2=int(eval(l2)))))
+            lambda_l1=l1, lambda_l2=l2)))
 
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -723,8 +738,9 @@ def plot_goose_2(model, batches, goose_id):
     image = resize(images[goose_id])
     row = [{
         'image': image,
-        'title': 'l2={}'.format(l2),
-        'rotate_title': True
+        'title': r'$\lambda_2=10^4$',
+        'rotate_title': True,
+        'yalign': 0.65
     }]
     for l1 in l1s:
         cell = results[goose_id][l1]
@@ -732,7 +748,7 @@ def plot_goose_2(model, batches, goose_id):
         row.append({
             'image': saliency,
             'cmap': 'gray',
-            'title': 'l1={}'.format(l1)
+            'title': r'$\lambda_1={}$'.format(l1)
         })
     matrix = [row]
     plot_matrix(matrix, 'figures/goose_2.pdf')
@@ -743,8 +759,8 @@ def plot_goose(n):
     model, batches = setup_imagenet(example_ids=[goose_id])
     batches = list(batches)
     plot_goose_1(model, batches, goose_id)
-    # plot_goose_2(model, batches, goose_id)
-    # plot_goose_2_full(model, batches, goose_id)
+    plot_goose_2(model, batches, goose_id)
+    plot_goose_2_full(model, batches, goose_id)
 
 
 if __name__ == '__main__':
@@ -754,7 +770,7 @@ if __name__ == '__main__':
     parser.add_argument('--n', type=int)
     args = parser.parse_args()
     fs = {
-        'attack': run_attack,
+        'ghorbani': run_attack,
         'l1l2': plot_l1_l2,
         'attacks': plot_explainer_attacker,
         'histogram': plot_histogram_l1,
