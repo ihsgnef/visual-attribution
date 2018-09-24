@@ -24,12 +24,6 @@ def _l2_normalize(d):
     d /= torch.norm(d_reshaped, 2, dim=1, keepdim=True) + 1e-8
     return d
 
-def _kl_div(log_probs, probs):
-    # pytorch KLDLoss is averaged over all dim if size_average=True
-    kld = F.kl_div(log_probs, probs, size_average=False)
-    return kld / log_probs.shape[0]
-
-
 def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
         protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
         n_iterations = 1
@@ -58,52 +52,8 @@ def gray_out(model, X, protected=None):
         X = X.cpu().data.numpy()
         X = X * -(protected - 1)    # zero out the important region
         X = X + (protected * 0.5) # set x to 0.5 values
-        X = Variable(torch.from_numpy(X).cuda(), requires_grad = True).float()
-        # change x at the unprotected regions to the mean values (0.4914, 0.4822, 0.4465)
+        X = Variable(torch.from_numpy(X).cuda(), requires_grad = True).float()        
         return X
-
-# class LinfPGDAttack(object):
-#     def __init__(self, model=None, epsilon=0.3, k=40, a=0.01, 
-#         random_start=True):
-#         """
-#         Attack parameter initialization. The attack performs k steps of
-#         size a, while always staying within epsilon from the initial
-#         point.
-#         https://github.com/MadryLab/mnist_challenge/blob/master/pgd_attack.py
-#         """
-#         self.model = model
-#         self.epsilon = epsilon
-#         self.k = k
-#         self.a = a
-#         self.rand = random_start
-#         self.loss_fn = nn.CrossEntropyLoss()
-
-#     def perturb(self, X_nat, y):
-#         """
-#         Given examples (X_nat, y), returns adversarial
-#         examples within epsilon of X_nat in l_infinity norm.
-#         """
-#         if self.rand:
-#             X = X_nat + np.random.uniform(-self.epsilon, self.epsilon,
-#                 X_nat.shape).astype('float32')
-#         else:
-#             X = np.copy(X_nat)
-
-#         for i in range(self.k):
-#             X_var = to_var(torch.from_numpy(X), requires_grad=True)
-#             y_var = to_var(torch.LongTensor(y))
-
-#             scores = self.model(X_var)
-#             loss = self.loss_fn(scores, y_var)
-#             loss.backward()
-#             grad = X_var.grad.data.cpu().numpy()
-
-#             X += self.a * np.sign(grad)
-
-#             X = np.clip(X, X_nat - self.epsilon, X_nat + self.epsilon)
-#             X = np.clip(X, 0, 1) # ensure valid pixel range
-
-#         return X
 
 def iterative_perturb(model, X_nat, y=None, epsilon=2.0/255.0, protected=None):
     protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
@@ -202,7 +152,7 @@ if __name__ == '__main__':
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
-        ('SmoothGrad', SmoothGradExplainer()),        
+        #('SmoothGrad', SmoothGradExplainer()),        
         #('Tuned_Sparse', LambdaTunerExplainer()),                                        
         #('IntegratedGrad', IntegrateGradExplainer()),
     ]
@@ -212,7 +162,8 @@ if __name__ == '__main__':
     for method_name, explainer in explainers:
         cutoff_scores[method_name] = [0] * 11
 
-    cutoffs = [0,10,20,30,40,50,60,70,80,90,100]#0,1,2,3,4,5,6,7,8,9,10]#,20,30]#[0,10,20,30,40,50,60,70,80,90,100] # percentage adversary can see
+    cutoffs = [0,10,20,30,40,50,60,70,80,90,100]
+    cutoffs = #[0,1,2,3,4,5,6,7,8,9,10]
     num_images = 4#128
 
     batch_size = 1#16
