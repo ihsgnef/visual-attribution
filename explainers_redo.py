@@ -31,14 +31,16 @@ class VanillaGradExplainer:
 
     def get_input_grad(self, x, output, y, create_graph=False):
         '''two methods for getting input gradient'''
-        loss = F.cross_entropy(output, y)
-        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
-
-        # grad_out = torch.zeros_like(output.data)
-        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
-        # x_grad, = torch.autograd.grad(output, x,
-        #                               grad_outputs=grad_out,
-        #                               create_graph=create_graph)
+        cross_entropy = True
+        if cross_entropy:
+            loss = F.cross_entropy(output, y)
+            x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
+        else:
+            grad_out = torch.zeros_like(output.data)
+            grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
+            x_grad, = torch.autograd.grad(output, x,
+                                          grad_outputs=grad_out,
+                                          create_graph=create_graph)
         return x_grad
 
     def explain(self, model, x):
@@ -106,11 +108,14 @@ class SparseExplainer(VanillaGradExplainer):
         return delta
 
     def loss(self, taylor_1, taylor_2, l1_term, l2_term):
+        batch_size = l1_term.shape[0]
+        l1_term = (self.lambda_l1 * l1_term).sum() / batch_size
+        l2_term = (self.lambda_l2 * l2_term).sum() / batch_size
         loss = (
             - self.lambda_t1 * taylor_1
             - self.lambda_t2 * taylor_2
-            + (self.lambda_l1 * l1_term).sum()
-            + (self.lambda_l2 * l2_term).sum()
+            + l1_term
+            + l2_term
         )
         return loss
 
@@ -138,12 +143,21 @@ class SparseExplainer(VanillaGradExplainer):
             hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
             taylor_1 = x_grad.dot(delta).sum()
             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
+            # l1_term = F.l1_loss(delta, torch.zeros_like(delta))
+            # l2_term = F.mse_loss(delta, torch.zeros_like(delta))
             l1_term = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
             l2_term = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
             l1_term = l1_term.sum(2).sum(1) / (n_chs * height * width)
             l2_term = l2_term.sum(2).sum(1) / (n_chs * height * width)
             # leave batch unreduced so each example in the batch can use
             # different hyperparameters
+
+            # loss = (
+            #     - self.lambda_t1 * taylor_1
+            #     - self.lambda_t2 * taylor_2
+            #     + self.lambda_l1 * l1_term
+            #     + self.lambda_l2 * l2_term
+            # )
 
             loss = self.loss(taylor_1, taylor_2, l1_term, l2_term)
 
@@ -374,16 +388,15 @@ class BatchTuner:
         self.explainer = SparseExplainer()
 
     def explain(self, model, xs, return_lambdas=False):
-        l1s = [0.5, 1, 10, 50, 100, 200, 500, 1000, 1500, 2000]
+        l1s = [0.5, 1, 10, 50, 100, 200, 500, 1000, 2000]
         l2s = [100, 200, 500, 1000, 2000, 5000, 1e4, 2e4, 5e4]
         batch_size, n_chs, height, width = xs.shape
+        assert batch_size == 1
 
         maps = []
         best_l1s = []
         best_l2s = []
-        xs = xs.cpu().numpy()
         for x in xs:
-            x = torch.FloatTensor(x).cuda().unsqueeze(0)
             x_l1 = x.clone().repeat(len(l1s), 1, 1, 1)
             x_l2 = x.clone().repeat(len(l2s), 1, 1, 1)
 
@@ -407,5 +420,4 @@ class BatchTuner:
             maps.append(saliency[l2_best_id])
             best_l1s.append(l1_best)
             best_l2s.append(l2_best)
-        saliency = torch.cat(maps, dim=0)
-        return saliency
+        return maps[0].unsqueeze(0)

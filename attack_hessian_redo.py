@@ -256,12 +256,10 @@ def attack_batch(model, batch, explainers, attackers,
     batch_size = batch.shape[0]
     for mth_name, explainer in explainers:
         saliency_1 = explainer.explain(model, batch.clone()).cpu().numpy()
-        print(saliency_1.shape)
         for atk_name, attacker in attackers:
             perturbed = attacker.attack(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
             saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
-            print(saliency_2.shape)
 
             scores = saliency_overlap(saliency_1, saliency_2)
 
@@ -504,6 +502,8 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
 
 
 def plot_explainer_attacker(n_examples, agg_func=viz.agg_default):
+    model, batches = setup_imagenet(batch_size=1, n_examples=n_examples)
+
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
         ('Ghorbani', GhorbaniAttack()),
@@ -518,7 +518,6 @@ def plot_explainer_attacker(n_examples, agg_func=viz.agg_default):
         # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
-    model, batches = setup_imagenet(n_examples=n_examples)
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)
     assert len(results) == n_examples
@@ -639,7 +638,8 @@ def plot_histogram_l1(n_examples, agg_func=viz.agg_default):
 
 def plot_goose_1(model, batches, goose_id):
     explainers = [
-        ('CASO', SparseExplainer(lambda_l1=200, lambda_l2=5e4)),
+        # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
+        ('CASO', BatchTuner()),
         ('Vanilla', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
