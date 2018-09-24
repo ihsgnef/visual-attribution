@@ -156,21 +156,20 @@ def attackUnImportant(saliency, cutoff = 10):
     return new_saliency
 
 if __name__ == '__main__':
-    #dataset = 'cifar10'
-    dataset = 'imagenet'
-    transf = get_preprocess('resnet18', 'sparse',dataset)
-    #model = utils.load_model('cifar50')
-    model = utils.load_model('resnet18')
+    dataset = 'cifar10'
+    #dataset = 'imagenet'
+    #transf = get_preprocess('resnet18', 'sparse',dataset)
+    transf = get_preprocess('resnet50', 'sparse',dataset)
+    model = utils.load_model('cifar50')
+    #model = utils.load_model('resnet18')
     model.cuda()
     model.eval()
 
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
-        ('SmoothGrad', SmoothGradExplainer()),
-        #('Sparse', SparseExplainer()),
-        #('Tuned_Sparse', LambdaTunerExplainer()),
-        #('Random', None),
+        #('SmoothGrad', SmoothGradExplainer()),        
+        ('Tuned_Sparse', LambdaTunerExplainer()),        
         #('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
