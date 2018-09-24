@@ -104,7 +104,7 @@ class SparseExplainer(VanillaGradExplainer):
             delta = _l2_normalize(delta)
         delta = nn.Parameter(delta, requires_grad=True)
         return delta
-    
+
     def loss(self, taylor_1, taylor_2, l1_term, l2_term):
         loss = (
             - self.lambda_t1 * taylor_1
@@ -255,16 +255,6 @@ class LambdaTunerExplainer:
     def __init__(self, times_input=False):
         self.times_input = times_input
 
-    def get_median_difference(self, saliency):
-        # compute median difference
-        saliency = viz.VisualizeImageGrayscale(saliency.cpu())
-        s = saliency.cpu().numpy().ravel()
-        topk = np.argsort(-s)[:int(s.size * 0.02)]
-        botk = np.argsort(s)[:int(s.size * 0.98)]
-        top_median = np.median(s[topk])
-        bot_median = np.median(s[botk])
-        return top_median - bot_median
-
     def explain(self, model, x, return_lambdas=False):
         input_data = x.clone()
 
@@ -275,10 +265,10 @@ class LambdaTunerExplainer:
         # get initial explanation
         saliency = SparseExplainer(lambda_l1=lambda_1,
                                    lambda_l2=lambda_2).explain(model, x)
-        current_median_difference = self.get_median_difference(saliency)
+        current_median_difference = viz.get_median_difference(saliency)
         print('lambda_1', lambda_1, 'lambda_2', lambda_2,
               'current_median_difference', current_median_difference)
-        
+
         lambda_1 = 0.50  # Need to start at non-zero because 10*0 = 0
         # also note these values are multiplied by 10 immediately
         lambda_2 = 100
@@ -294,7 +284,7 @@ class LambdaTunerExplainer:
             saliency = SparseExplainer(
                 lambda_l1=lambda_1,
                 lambda_l2=lambda_2).explain(model, x)
-            current_median_difference = self.get_median_difference(saliency)
+            current_median_difference = viz.get_median_difference(saliency)
             print('lambda_1', lambda_1, 'lambda_2', lambda_2,
                   'current_median_difference', current_median_difference)
 
@@ -311,7 +301,7 @@ class LambdaTunerExplainer:
             saliency = SparseExplainer(
                 lambda_l1=lambda_1,
                 lambda_l2=lambda_2).explain(model, x)
-            current_median_difference = self.get_median_difference(saliency)
+            current_median_difference = viz.get_median_difference(saliency)
             print('lambda_1', lambda_1, 'lambda_2', lambda_2,
                   'current_median_difference', current_median_difference)
 
@@ -321,7 +311,7 @@ class LambdaTunerExplainer:
 
         saliency = SparseExplainer(lambda_l1=lambda_1,
                                    lambda_l2=lambda_2).explain(model, x)
-        current_median_difference = self.get_median_difference(saliency)
+        current_median_difference = viz.get_median_difference(saliency)
         print('Final Lambda_1', lambda_1,
               'Final_Lambda_2', lambda_2,
               'Final_Median', current_median_difference)
@@ -350,7 +340,7 @@ class IntegrateGradExplainer(VanillaGradExplainer):
         return grad / self.n_iter
 
 
-class SmoothGradExplainer(object):
+class SmoothGradExplainer:
     def __init__(self, base_explainer=None, stdev_spread=0.15,
                  nsamples=25, magnitude=True, times_input=False):
         if base_explainer is None:
@@ -376,3 +366,46 @@ class SmoothGradExplainer(object):
         if self.times_input:
             total_gradients *= x
         return total_gradients
+
+
+class BatchTuner:
+
+    def __init__(self):
+        self.explainer = SparseExplainer()
+
+    def explain(self, model, xs, return_lambdas=False):
+        l1s = [0.5, 1, 10, 50, 100, 200, 500, 1000, 1500, 2000]
+        l2s = [100, 200, 500, 1000, 2000, 5000, 1e4, 2e4, 5e4]
+        batch_size, n_chs, height, width = xs.shape
+
+        maps = []
+        best_l1s = []
+        best_l2s = []
+        xs = xs.cpu().numpy()
+        for x in xs:
+            x = torch.FloatTensor(x).cuda().unsqueeze(0)
+            x_l1 = x.clone().repeat(len(l1s), 1, 1, 1)
+            x_l2 = x.clone().repeat(len(l2s), 1, 1, 1)
+
+            self.explainer.lambda_l1 = Variable(torch.FloatTensor(l1s).cuda())
+            self.explainer.lambda_l2 = l2s[0]
+
+            saliency = self.explainer.explain(model, x_l1).cpu().numpy()
+            medians = [viz.get_median_difference(s) for s in saliency]
+            l1_best_id = np.argmax(medians)
+            l1_best = l1s[l1_best_id]
+
+            self.explainer.lambda_l1 = l1_best
+            self.explainer.lambda_l2 = Variable(torch.FloatTensor(l2s).cuda())
+
+            saliency = self.explainer.explain(model, x_l2)
+            s = saliency.cpu().numpy()
+            medians = [viz.get_median_difference(x) for x in s]
+            l2_best_id = np.argmax(medians)
+            l2_best = l2s[l2_best_id]
+
+            maps.append(saliency[l2_best_id])
+            best_l1s.append(l1_best)
+            best_l2s.append(l2_best)
+        saliency = torch.cat(maps, dim=0)
+        return saliency

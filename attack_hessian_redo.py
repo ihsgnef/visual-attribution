@@ -18,7 +18,7 @@ import utils
 from explainers_redo import zero_grad
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer
+    LambdaTunerExplainer, BatchTuner
 
 import matplotlib.pyplot as plt
 
@@ -27,35 +27,6 @@ transf = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
     ])
-
-
-def agg_default(x):
-    if x.ndim == 4:
-        return np.abs(x).sum(1)
-    elif x.ndim == 3:
-        return np.abs(x).sum(0)
-
-
-def clip(x):
-    if x.ndim == 3:
-        batch_size, height, width = x.shape
-        x = x.reshape(batch_size, -1)
-        vmax = np.expand_dims(np.percentile(x, 98, axis=1), 1)
-        vmin = np.expand_dims(np.min(x, axis=1), 1)
-        x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
-        x = x.reshape(batch_size, height, width)
-    elif x.ndim == 3:
-        height, width = x.shape
-        x = x.ravel()
-        vmax = np.percentile(x, 98)
-        vmin = np.min(x)
-        x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
-        x = x.reshape(height, width)
-    return x
-
-
-def agg_clip(x):
-    return clip(agg_default(x))
 
 
 def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
@@ -256,8 +227,8 @@ def saliency_correlation(s1, s2):
     assert s1.shape == s2.shape
     assert s1.ndim == 4
     batch_size = s1.shape[0]
-    s1 = agg_default(s1)
-    s2 = agg_default(s2)
+    s1 = viz.agg_default(s1)
+    s2 = viz.agg_default(s2)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
     return [spearmanr(x1, x2).correlation for x1, x2 in zip(s1, s2)]
@@ -266,8 +237,8 @@ def saliency_correlation(s1, s2):
 def saliency_overlap(s1, s2):
     assert s1.shape == s2.shape
     batch_size = s1.shape[0]
-    s1 = agg_default(s1)
-    s2 = agg_default(s2)
+    s1 = viz.agg_default(s1)
+    s2 = viz.agg_default(s2)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
     scores = []
@@ -285,10 +256,12 @@ def attack_batch(model, batch, explainers, attackers,
     batch_size = batch.shape[0]
     for mth_name, explainer in explainers:
         saliency_1 = explainer.explain(model, batch.clone()).cpu().numpy()
+        print(saliency_1.shape)
         for atk_name, attacker in attackers:
             perturbed = attacker.attack(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
             saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
+            print(saliency_2.shape)
 
             scores = saliency_overlap(saliency_1, saliency_2)
 
@@ -530,7 +503,7 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
     return results, all_ids, all_images, all_labels
 
 
-def plot_explainer_attacker(n_examples, agg_func=agg_default):
+def plot_explainer_attacker(n_examples, agg_func=viz.agg_default):
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
         ('Ghorbani', GhorbaniAttack()),
@@ -538,8 +511,8 @@ def plot_explainer_attacker(n_examples, agg_func=agg_default):
     ]
 
     explainers = [
-        ('Sparse', SparseExplainer()),
-        ('Tuned_Sparse', LambdaTunerExplainer()),
+        # ('Sparse', SparseExplainer()),
+        ('CASO', BatchTuner()),
         ('Vanilla', VanillaGradExplainer()),
         # ('SmoothGrad', SmoothGradExplainer()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
@@ -579,7 +552,7 @@ def plot_explainer_attacker(n_examples, agg_func=agg_default):
     plot_matrix(matrix, 'figures/explainer_attacker.pdf')
 
 
-def plot_l1_l2(n_examples, agg_func=agg_default):
+def plot_l1_l2(n_examples, agg_func=viz.agg_default):
     attackers = [
         # ('Original', EmptyAttack()),
         ('Ghorbani', GhorbaniAttack()),
@@ -639,7 +612,7 @@ def plot_l1_l2(n_examples, agg_func=agg_default):
     plot_matrix(matrix, 'figures/l1_l2.pdf')
 
 
-def plot_histogram_l1(n_examples, agg_func=agg_default):
+def plot_histogram_l1(n_examples, agg_func=viz.agg_default):
     l1s = [0, 0.1, 0.5, 1, 10, 100]
     explainers = []
     for l1 in l1s:
@@ -706,10 +679,10 @@ def plot_goose_1(model, batches, goose_id):
     for mth_name, _ in explainers:
         col = []
         saliency = results[mth_name]['saliency_1']
-        saliency_0 = agg_default(saliency)
-        saliency_1 = agg_clip(saliency)
-        saliency_2 = agg_default(saliency * image_input)
-        saliency_3 = agg_clip(saliency * image_input)
+        saliency_0 = viz.agg_default(saliency)
+        saliency_1 = viz.agg_clip(saliency)
+        saliency_2 = viz.agg_default(saliency * image_input)
+        saliency_3 = viz.agg_clip(saliency * image_input)
         col.append({'image': saliency_0, 'cmap': 'gray', 'title': mth_name})
         col.append({'image': saliency_1, 'cmap': 'gray'})
         col.append({'image': saliency_2, 'cmap': 'gray'})
@@ -747,7 +720,7 @@ def plot_goose_2_full(model, batches, goose_id):
             # only show explainer label on top of the row of original
             # example without perturbation
             cell = results[goose_id][(l1, l2)]
-            saliency = agg_default(cell['saliency_1'])
+            saliency = viz.agg_default(cell['saliency_1'])
             row.append({
                 'image': saliency,
                 'cmap': 'gray',
@@ -778,7 +751,7 @@ def plot_goose_2(model, batches, goose_id):
     }]
     for l1 in l1s:
         cell = results[goose_id][l1]
-        saliency = agg_default(cell['saliency_1'])
+        saliency = viz.agg_default(cell['saliency_1'])
         row.append({
             'image': saliency,
             'cmap': 'gray',

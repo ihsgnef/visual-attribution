@@ -57,3 +57,43 @@ def VisualizeImageGrayscale(imgs, percentile=99):
     imgs = torch.clamp((imgs - vmin) / (vmax - vmin), 0, 1)
     imgs = imgs.view(batch_size, height, width)
     return imgs
+
+
+def agg_default(x):
+    if x.ndim == 4:
+        return np.abs(x).sum(1)
+    elif x.ndim == 3:
+        return np.abs(x).sum(0)
+
+
+def clip(x):
+    if x.ndim == 3:
+        batch_size, height, width = x.shape
+        x = x.reshape(batch_size, -1)
+        vmax = np.expand_dims(np.percentile(x, 98, axis=1), 1)
+        vmin = np.expand_dims(np.min(x, axis=1), 1)
+        x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
+        x = x.reshape(batch_size, height, width)
+    elif x.ndim == 3:
+        height, width = x.shape
+        x = x.ravel()
+        vmax = np.percentile(x, 98)
+        vmin = np.min(x)
+        x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
+        x = x.reshape(height, width)
+    return x
+
+
+def agg_clip(x):
+    return clip(agg_default(x))
+
+
+def get_median_difference(saliency):
+    # compute median difference
+    assert saliency.ndim == 3
+    s = agg_clip(saliency).ravel()
+    topk = np.argsort(-s)[:int(s.size * 0.02)]
+    botk = np.argsort(s)[:int(s.size * 0.98)]
+    top_median = np.median(s[topk])
+    bot_median = np.median(s[botk])
+    return top_median - bot_median
