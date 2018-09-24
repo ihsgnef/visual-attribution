@@ -24,7 +24,34 @@ def _l2_normalize(d):
     return d
 
 
-class SparseExplainer:
+class VanillaGradExplainer:
+
+    def __init__(self, times_input=False):
+        self.times_input = times_input
+
+    def get_input_grad(self, x, output, y, create_graph=False):
+        '''two methods for getting input gradient'''
+        loss = F.cross_entropy(output, y)
+        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
+
+        # grad_out = torch.zeros_like(output.data)
+        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
+        # x_grad, = torch.autograd.grad(output, x,
+        #                               grad_outputs=grad_out,
+        #                               create_graph=create_graph)
+        return x_grad
+
+    def explain(self, model, x):
+        x = Variable(x, requires_grad=True)
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y).data
+        if self.times_input:
+            x_grad *= x.data
+        return x_grad
+
+
+class SparseExplainer(VanillaGradExplainer):
 
     def __init__(self,
                  lambda_t1=1,
@@ -61,18 +88,6 @@ class SparseExplainer:
         self.times_input = times_input
         assert init in ['zero', 'random', 'grad']
         self.history = defaultdict(list)
-
-    def get_input_grad(self, x, output, y, create_graph=False):
-        '''two methods for getting input gradient'''
-        loss = F.cross_entropy(output, y)
-        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
-
-        # grad_out = torch.zeros_like(output.data)
-        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
-        # x_grad, = torch.autograd.grad(output, x,
-        #                               grad_outputs=grad_out,
-        #                               create_graph=create_graph)
-        return x_grad
 
     def initialize_delta(self, model, x):
         batch_size, n_chs, height, width = x.shape
@@ -306,33 +321,6 @@ class LambdaTunerExplainer:
         if self.times_input:
             saliency *= input_data
         return saliency
-
-
-class VanillaGradExplainer:
-
-    def __init__(self, times_input=False):
-        self.times_input = times_input
-
-    def get_input_grad(self, x, output, y, create_graph=False):
-        '''two methods for getting input gradient'''
-        loss = F.cross_entropy(output, y)
-        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
-
-        # grad_out = torch.zeros_like(o.utput.data)
-        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
-        # x_grad, = torch.autograd.grad(output, x,
-        #                               grad_outputs=grad_out,
-        #                               create_graph=create_graph)
-        return x_grad
-
-    def explain(self, model, x):
-        x = Variable(x, requires_grad=True)
-        output = model(x)
-        y = output.max(1)[1]
-        x_grad = self.get_input_grad(x, output, y).data
-        if self.times_input:
-            x_grad *= x.data
-        return x_grad
 
 
 class IntegrateGradExplainer(VanillaGradExplainer):

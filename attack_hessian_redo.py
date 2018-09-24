@@ -330,7 +330,7 @@ def setup_imagenet(batch_size=16, example_ids=None,
     if example_ids is not None:
         examples = {r: (r, m, l)
                     for r, m, l in zip(real_ids, image_files, labels)}
-        examples = list([examples[x] for x in example_ids])
+        examples = [examples[x] for x in example_ids]
     else:
         examples = list(zip(real_ids, image_files, labels))
 
@@ -619,7 +619,7 @@ def plot_histogram_l1(n_examples, agg_func=agg_default):
 
 def plot_goose_1(model, batches, goose_id):
     explainers = [
-        ('Sparse', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
+        ('Sparse', SparseExplainer(lambda_l1=200, lambda_l2=5e4)),
         # ('Sparse', LambdaTunerExplainer()),
         ('Vanilla', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
@@ -730,6 +730,7 @@ def plot_goose_2(model, batches, goose_id):
 def plot_goose(n):
     goose_id = 'ILSVRC2012_val_00045520.JPEG'
     model, batches = setup_imagenet(example_ids=[goose_id])
+    batches = list(batches)
     plot_goose_1(model, batches, goose_id)
     plot_goose_2(model, batches, goose_id)
     plot_goose_2_full(model, batches, goose_id)
