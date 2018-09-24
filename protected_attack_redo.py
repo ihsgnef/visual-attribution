@@ -169,7 +169,7 @@ if __name__ == '__main__':
         ('Random', None),
         ('SmoothGrad', SmoothGradExplainer()),
         #('Sparse', SparseExplainer()),
-        #('Tuned_Sparse', LambdaTunerExplainer()),
+        ('Tuned_Sparse', LambdaTunerExplainer()),
         #('Random', None),
         #('IntegratedGrad', IntegrateGradExplainer()),
     ]
@@ -179,8 +179,8 @@ if __name__ == '__main__':
     for method_name, explainer in explainers:
         cutoff_scores[method_name] = [0] * 11
 
-    cutoffs = [10]#0,1,2,3,4,5,6,7,8,9,10]#,20,30]#[0,10,20,30,40,50,60,70,80,90,100] # percentage adversary can see
-    num_images = 1#16#32
+    cutoffs = [0,10,20,30,40,50,60,70,80,90,100]#0,1,2,3,4,5,6,7,8,9,10]#,20,30]#[0,10,20,30,40,50,60,70,80,90,100] # percentage adversary can see
+    num_images = 128
 
     batch_size = 1#16
 
@@ -229,6 +229,7 @@ if __name__ == '__main__':
                 protected_region = np.repeat(protected_region[:, np.newaxis, :, :], 3, axis=1)                
                 all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
 
+        continue
         plt.figure(figsize=(25, 15))
         plt.subplot(3, 5, 1)
         
