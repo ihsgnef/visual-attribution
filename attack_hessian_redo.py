@@ -367,6 +367,40 @@ def setup_imagenet(batch_size=16, example_ids=None,
 def run_attack(n_examples):
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
+
+    n_examples = len(example_ids)
+    model, batches = setup_imagenet(example_ids=example_ids)
+    attackers = [
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
+    ]
+
+    explainers = [
+        ('Sparse', SparseExplainer()),
+        # ('Robust', RobustSparseExplainer()),
+        ('Vanilla', VanillaGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),
+        ('IntegratedGrad', IntegrateGradExplainer()),
+    ]
+    results = []
+    n_batches = int(n_examples / 16)
+    for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
+        ids, xs, ys = batch
+        xs = torch.stack([transf(x) for x in xs]).cuda()
+        rows = attack_batch(model, xs, explainers, attackers)
+        for i, row in enumerate(rows):
+            rows[i]['idx'] = ids[row['idx']]
+        results += rows
+    df = pd.DataFrame(results)
+    df.to_pickle('ghorbani_1000_baselines.pkl')
+    df.drop(['idx'], axis=1)
+    print(df.groupby(['attacker', 'explainer']).mean())
+
+
+def run_attack_tuner(n_examples):
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+
     n_examples = len(example_ids)
     model, batches = setup_imagenet(example_ids=example_ids)
     attackers = [
@@ -391,6 +425,7 @@ def run_attack(n_examples):
             rows[i]['idx'] = ids[row['idx']]
         results += rows
     df = pd.DataFrame(results)
+    df.to_pickle('ghorbani_1000_baselines.pkl')
     df.drop(['idx'], axis=1)
     print(df.groupby(['attacker', 'explainer']).mean())
 
@@ -631,8 +666,7 @@ def plot_histogram_l1(n_examples, agg_func=agg_default):
 
 def plot_goose_1(model, batches, goose_id):
     explainers = [
-        ('Sparse', SparseExplainer(lambda_l1=200, lambda_l2=5e4)),
-        # ('Sparse', LambdaTunerExplainer()),
+        ('CASO', SparseExplainer(lambda_l1=200, lambda_l2=5e4)),
         ('Vanilla', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),

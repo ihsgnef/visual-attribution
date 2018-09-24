@@ -104,6 +104,15 @@ class SparseExplainer(VanillaGradExplainer):
             delta = _l2_normalize(delta)
         delta = nn.Parameter(delta, requires_grad=True)
         return delta
+    
+    def loss(self, taylor_1, taylor_2, l1_term, l2_term):
+        loss = (
+            - self.lambda_t1 * taylor_1
+            - self.lambda_t2 * taylor_2
+            + (self.lambda_l1 * l1_term).sum()
+            + (self.lambda_l2 * l2_term).sum()
+        )
+        return loss
 
     def explain(self, model, x):
         self.history = defaultdict(list)
@@ -129,15 +138,14 @@ class SparseExplainer(VanillaGradExplainer):
             hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
             taylor_1 = x_grad.dot(delta).sum()
             taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
-            l1_term = F.l1_loss(delta, torch.zeros_like(delta))
-            l2_term = F.mse_loss(delta, torch.zeros_like(delta))
+            l1_term = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
+            l2_term = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
+            l1_term = l1_term.sum(2).sum(1) / (n_chs * height * width)
+            l2_term = l2_term.sum(2).sum(1) / (n_chs * height * width)
+            # leave batch unreduced so each example in the batch can use
+            # different hyperparameters
 
-            loss = (
-                - self.lambda_t1 * taylor_1
-                - self.lambda_t2 * taylor_2
-                + self.lambda_l1 * l1_term
-                + self.lambda_l2 * l2_term
-            )
+            loss = self.loss(taylor_1, taylor_2, l1_term, l2_term)
 
             # log optimization
             vmax = delta.abs().sum(1).max(1)[0]
@@ -257,23 +265,23 @@ class LambdaTunerExplainer:
         bot_median = np.median(s[botk])
         return top_median - bot_median
 
-    def explain(self, model, x):
+    def explain(self, model, x, return_lambdas=False):
         input_data = x.clone()
 
         best_median = 0
-        current_lambda1 = 0
-        current_lambda2 = 0
+        lambda_1 = 0
+        lambda_2 = 0
 
         # get initial explanation
-        saliency = SparseExplainer(lambda_l1=current_lambda1,
-                                   lambda_l2=current_lambda2).explain(model, x)
+        saliency = SparseExplainer(lambda_l1=lambda_1,
+                                   lambda_l2=lambda_2).explain(model, x)
         current_median_difference = self.get_median_difference(saliency)
-        print('lambda_1', current_lambda1, 'lambda_2', current_lambda2,
+        print('lambda_1', lambda_1, 'lambda_2', lambda_2,
               'current_median_difference', current_median_difference)
-
-        current_lambda1 = 0.50  # Need to start at non-zero because 10*0 = 0
+        
+        lambda_1 = 0.50  # Need to start at non-zero because 10*0 = 0
         # also note these values are multiplied by 10 immediately
-        current_lambda2 = 100
+        lambda_2 = 100
         increase_rate = 2  # multiply each time
         patience = 0.02
 
@@ -281,46 +289,46 @@ class LambdaTunerExplainer:
         while (current_median_difference >= best_median
                or abs(current_median_difference - best_median) < patience):
             best_median = max(current_median_difference, best_median)
-            current_lambda1 = current_lambda1 * increase_rate
+            lambda_1 = lambda_1 * increase_rate
 
             saliency = SparseExplainer(
-                lambda_l1=current_lambda1,
-                lambda_l2=current_lambda2).explain(model, x)
+                lambda_l1=lambda_1,
+                lambda_l2=lambda_2).explain(model, x)
             current_median_difference = self.get_median_difference(saliency)
-            print('lambda_1', current_lambda1, 'lambda_2', current_lambda2,
+            print('lambda_1', lambda_1, 'lambda_2', lambda_2,
                   'current_median_difference', current_median_difference)
 
         print("Done Tuning Lambda_L1")
         # because current settings are one too far here
-        current_lambda1 = current_lambda1 / increase_rate
+        lambda_1 = lambda_1 / increase_rate
         current_median_difference = best_median
 
         while (current_median_difference >= best_median
                or abs(current_median_difference - best_median) < patience):
             best_median = max(current_median_difference, best_median)
-            current_lambda2 = current_lambda2 * increase_rate
+            lambda_2 = lambda_2 * increase_rate
 
             saliency = SparseExplainer(
-                lambda_l1=current_lambda1,
-                lambda_l2=current_lambda2).explain(model, x)
+                lambda_l1=lambda_1,
+                lambda_l2=lambda_2).explain(model, x)
             current_median_difference = self.get_median_difference(saliency)
-            print('lambda_1', current_lambda1, 'lambda_2', current_lambda2,
+            print('lambda_1', lambda_1, 'lambda_2', lambda_2,
                   'current_median_difference', current_median_difference)
 
         print("Done Tuning Lambda_L2")
         # because current settings are one too far here
-        current_lambda2 = current_lambda2 / increase_rate
+        lambda_2 = lambda_2 / increase_rate
 
-        saliency = SparseExplainer(lambda_l1=current_lambda1,
-                                   lambda_l2=current_lambda2).explain(model, x)
+        saliency = SparseExplainer(lambda_l1=lambda_1,
+                                   lambda_l2=lambda_2).explain(model, x)
         current_median_difference = self.get_median_difference(saliency)
-        print('Final Lambda_1', current_lambda1,
-              'Final_Lambda_2', current_lambda2,
+        print('Final Lambda_1', lambda_1,
+              'Final_Lambda_2', lambda_2,
               'Final_Median', current_median_difference)
 
         if self.times_input:
             saliency *= input_data
-        return saliency
+        return saliency, lambda_1, lambda_2 if return_lambdas else saliency
 
 
 class IntegrateGradExplainer(VanillaGradExplainer):
