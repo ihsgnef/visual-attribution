@@ -330,7 +330,7 @@ def setup_imagenet(batch_size=16, example_ids=None,
     if example_ids is not None:
         examples = {r: (r, m, l)
                     for r, m, l in zip(real_ids, image_files, labels)}
-        examples = [examples[x] for x in example_ids]
+        examples = list([examples[x] for x in example_ids])
     else:
         examples = list(zip(real_ids, image_files, labels))
 
@@ -617,9 +617,7 @@ def plot_histogram_l1(n_examples, agg_func=agg_default):
         pickle.dump(df, f)
 
 
-def plot_goose_1():
-    goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    model, batches = setup_imagenet(example_ids=[goose_id])
+def plot_goose_1(model, batches, goose_id):
     explainers = [
         ('Sparse', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
         # ('Sparse', LambdaTunerExplainer()),
@@ -663,10 +661,7 @@ def plot_goose_1():
     plot_matrix(matrix, 'figures/goose_1.pdf')
 
 
-def plot_goose_2_full():
-    goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    model, batches = setup_imagenet(example_ids=[goose_id])
-
+def plot_goose_2_full(model, batches, goose_id):
     l1s = [1, 10, 50, 100, 200]
     l2s = ['1e2', '1e3', '1e4', '1e5', '1e6']
 
@@ -702,10 +697,7 @@ def plot_goose_2_full():
     plot_matrix(matrix, 'figures/goose_2_full.pdf')
 
 
-def plot_goose_2():
-    goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    model, batches = setup_imagenet(example_ids=[goose_id])
-
+def plot_goose_2(model, batches, goose_id):
     l1s = [1, 10, 50, 100, 200]
     l2 = '1e4'
 
@@ -735,19 +727,25 @@ def plot_goose_2():
     plot_matrix(matrix, 'figures/goose_2.pdf')
 
 
+def plot_goose(n):
+    goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    model, batches = setup_imagenet(example_ids=[goose_id])
+    plot_goose_1(model, batches, goose_id)
+    plot_goose_2(model, batches, goose_id)
+    plot_goose_2_full(model, batches, goose_id)
+
+
 if __name__ == '__main__':
-    # import argparse
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument('--task', type=str)
-    # parser.add_argument('--n', type=int)
-    # args = parser.parse_args()
-    # fs = {
-    #     'attack': run_attack,
-    #     'l1l2': plot_l1_l2,
-    #     'attacks': plot_explainer_attacker,
-    #     'histogram': plot_histogram_l1,
-    # }
-    # fs[args.task](args.n)
-    plot_goose_1()
-    plot_goose_2()
-    plot_goose_2_full()
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--task', type=str)
+    parser.add_argument('--n', type=int)
+    args = parser.parse_args()
+    fs = {
+        'attack': run_attack,
+        'l1l2': plot_l1_l2,
+        'attacks': plot_explainer_attacker,
+        'histogram': plot_histogram_l1,
+        'goose': plot_goose,
+    }
+    fs[args.task](args.n)
