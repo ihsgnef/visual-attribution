@@ -60,20 +60,23 @@ if __name__ == '__main__':
     model.eval()
 
     explainers = [
-        # ('Sparse', SparseExplainer()),
-        # ('Tuned_Sparse', LambdaTunerExplainer()),
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
         ('SmoothGrad', SmoothGradExplainer()),
+        #('Sparse', SparseExplainer()),
+        ('Tuned_Sparse', LambdaTunerExplainer()),
+        #('Random', None),
+        #('SmoothGrad', SmoothGradExplainer()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
     cutoff_scores = dict()
-    for explainer in explainers:
-        cutoff_scores[explainer] = [0] * 11    
+    for method_name, explainer in explainers:
+        cutoff_scores[method_name] = [0] * 11    
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100] # percentage adversary can see
     num_images = 16
+
     batch_size = 16
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
@@ -82,10 +85,10 @@ if __name__ == '__main__':
         original_prediction = model(inputs).max(1, keepdim=True)[1]
 
         for method_name, explainer in explainers:
-            if method_name == "random":
-                saliency = torch.from_numpy(np.random.rand(*inputs.shape)).cuda()            
+            if method_name == "Random":
+                saliency = torch.from_numpy(np.random.rand(*inputs.shape)).float()            
             else:
-                saliency = explainer.explain(model, copy.deepcopy(inputs))
+                saliency = explainer.explain(model, copy.deepcopy(inputs).data)
             saliency = viz.VisualizeImageGrayscale(saliency.cpu())
 
             for cutoff in cutoffs:
@@ -93,13 +96,13 @@ if __name__ == '__main__':
                 adversarial_image = perturb(model, copy.deepcopy(inputs), protected = protected_region)            
                 adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                 correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
-                cutoff_scores[explainer][cutoff / 10] += float(correct / batch_size)
+                cutoff_scores[method_name][int(cutoff / 10)] += float(correct / batch_size)
     
 
     for cutoff in cutoffs:
         print("Adversary Can Modify: ", cutoff)
-        for explainer in explainers:
-            print(explainer, cutoff_scores[explainer][cutoff/10])                    
+        for method_name, explainer in explainers:
+            print(method_name, cutoff_scores[method_name][int(cutoff/10)] / (num_images / batch_size))                    
 
         # with open("protected_results.txt", "a") as text_file:
             
@@ -109,3 +112,4 @@ if __name__ == '__main__':
         #         print(method_name, accuracy)
         #         text_file.write(str(method_name) + '\n')
         #         text_file.write(str(accuracy) + '\n')
+
