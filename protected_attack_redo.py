@@ -31,6 +31,7 @@ def _kl_div(log_probs, probs):
 
 
 def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
+        protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
         n_iterations = 1
         xi = 1e-6
 
@@ -47,10 +48,10 @@ def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
             adv_loss = F.cross_entropy(pred_hat, ind)
             d_grad, = torch.autograd.grad(adv_loss, d)
             d = _l2_normalize(d_grad.data)        
-        d = d.grad.data.sign() * epsilon * protected_region
-        X = torch.clamp(X, X + epsilon, X - epsilon)
-        X = torch.clamp(X, 0, 1)
-        return X
+        d_sign = d.cpu().sign().numpy() * epsilon * protected_region
+        perturbed_X = x.data.cpu().numpy() + d_sign 
+        perturbed_X = np.clip(perturbed_X, 0, 1)
+        return Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
 
 def gray_out(model, X, protected=None):
         protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
@@ -189,12 +190,12 @@ def attackUnImportant(saliency, cutoff = 10):
     return new_saliency
 
 if __name__ == '__main__':
-    dataset = 'cifar10'
-    #dataset = 'imagenet'
-    #transf = get_preprocess('resnet18', 'sparse',dataset)
-    transf = get_preprocess('resnet50', 'sparse',dataset)
-    model = utils.load_model('cifar50')
-    #model = utils.load_model('resnet18')
+    #dataset = 'cifar10'
+    dataset = 'imagenet'
+    transf = get_preprocess('resnet18', 'sparse',dataset)
+    #transf = get_preprocess('resnet50', 'sparse',dataset)
+    #model = utils.load_model('cifar50')
+    model = utils.load_model('resnet18')
     model.cuda()
     model.eval()
 
@@ -202,8 +203,8 @@ if __name__ == '__main__':
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
         ('SmoothGrad', SmoothGradExplainer()),        
-        ('Tuned_Sparse', LambdaTunerExplainer()),                                        
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        #('Tuned_Sparse', LambdaTunerExplainer()),                                        
+        #('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
 
@@ -212,10 +213,10 @@ if __name__ == '__main__':
         cutoff_scores[method_name] = [0] * 11
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100]#0,1,2,3,4,5,6,7,8,9,10]#,20,30]#[0,10,20,30,40,50,60,70,80,90,100] # percentage adversary can see
-    num_images = 128
+    num_images = 4#128
 
     batch_size = 1#16
-    attack_method = 'single_step'
+    attack_method = 'second_order'
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
