@@ -256,7 +256,7 @@ class LambdaTunerExplainer:
         print('lambda_1', current_lambda1, 'lambda_2', current_lambda2,
               'current_median_difference', current_median_difference)
 
-        current_lambda1 = 0.05  # Need to start at non-zero because 10*0 = 0
+        current_lambda1 = 0.50  # Need to start at non-zero because 10*0 = 0
         # also note these values are multiplied by 10 immediately
         current_lambda2 = 100
         increase_rate = 2  # multiply each time
