@@ -89,6 +89,7 @@ def get_input_grad(x, output, y, create_graph=False):
                                           grad_outputs=grad_out,
                                           create_graph=create_graph)
         return x_grad
+
 # uses no l1 (we want the adversary to attack everything. Though it could be extended to do a form of sparse adversarial examples[ref])
 # uses a fixed L2, though the L2 could be set example specific using the change in label if we assume access to the model
 # clips delta to be in the range (-e,e) rather than unbounded.
@@ -251,8 +252,10 @@ if __name__ == '__main__':
         #confidence_for_prediction = original_confidence[original_prediction]#.max(1, keepdim=True)
         confidence_for_class = original_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
 
-        raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
-        all_saliency_maps = []                
+        #raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
+        #all_saliency_maps = []                
+        # raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
+        #all_saliency_maps = []                
 
         for method_name, explainer in explainers:
             if method_name == "Random":
