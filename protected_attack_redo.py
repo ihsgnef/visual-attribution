@@ -172,6 +172,7 @@ if __name__ == '__main__':
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
         inputs = Variable(batch.cuda(), requires_grad=True)
+        print(inputs.shape)        
         forward_pass = model(normalized_transf(inputs))
         original_prediction = forward_pass.max(1, keepdim=True)[1]
         original_confidence = F.softmax(forward_pass, dim=1)        
