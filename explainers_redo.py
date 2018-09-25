@@ -437,6 +437,9 @@ class BatchTuner:
             l1_lo = l1s[max(l1_best_id - 1, 0)]
             l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
 
+            if medians[l1_best_id] > 0.945:
+                return saliency[l1_best_id].unsqueeze(0)
+
             l2 = Variable(torch.FloatTensor(l2s).cuda())
             saliency = SparseExplainer(
                 lambda_l1=l1_best, lambda_l2=l2).explain(model, x_l2)
@@ -448,4 +451,6 @@ class BatchTuner:
             l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
 
             saliency = saliency[l2_best_id].unsqueeze(0)
+            if medians[l2_best_id] > 0.945:
+                return saliency
         return saliency
