@@ -3,7 +3,7 @@ import torch
 import viz
 import utils
 from create_explainer import get_explainer
-from preprocess import get_preprocess
+from preprocess import get_preprocess, get_normalize_preprocess
 import copy
 from collections import Iterable
 import torch.nn as nn
@@ -172,8 +172,9 @@ if __name__ == '__main__':
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
         inputs = Variable(batch.cuda(), requires_grad=True)
-        print(inputs.shape)        
-        forward_pass = model(normalized_transf(inputs))
+        print(inputs.shape)       
+        print(inputs.data.cpu().numpy()[0].shape)
+        forward_pass = model(normalized_transf(inputs.data.cpu().numpy()[0]).cuda())
         original_prediction = forward_pass.max(1, keepdim=True)[1]
         original_confidence = F.softmax(forward_pass, dim=1)        
         confidence_for_class = original_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
