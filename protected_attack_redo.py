@@ -171,10 +171,15 @@ if __name__ == '__main__':
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
-        inputs = Variable(batch.cuda(), requires_grad=True)
-        print(inputs.shape)       
-        print(inputs.data.cpu().numpy()[0].shape)
-        forward_pass = model(normalized_transf(inputs.data.cpu().numpy()[0]).cuda())
+        unnormalized_inputs = [transf(x) for x in batch]            
+        unnormalized_inputs = torch.stack(unnormalized_inputs)
+        unnormalized_inputs = Variable(unnormalized_inputs.cuda(), requires_grad=True)
+
+        normalized_inputs = [normalized_transf(x) for x in batch]            
+        normalized_inputs = torch.stack(normalized_inputs)
+        normalized_inputs = Variable(normalized_inputs.cuda(), requires_grad=True)
+        
+        forward_pass = model(normalized_inputs)
         original_prediction = forward_pass.max(1, keepdim=True)[1]
         original_confidence = F.softmax(forward_pass, dim=1)        
         confidence_for_class = original_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
@@ -184,29 +189,29 @@ if __name__ == '__main__':
 
         for method_name, explainer in explainers:
             if method_name == "Random":
-                saliency = torch.from_numpy(np.random.rand(*transf(inputs).shape)).float()
+                saliency = torch.from_numpy(np.random.rand(*unnormalized_inputs.shape)).float()
             else:
-                saliency = explainer.explain(model, copy.deepcopy(transf(inputs)).data)
+                saliency = explainer.explain(model, copy.deepcopy(unnormalized_inputs).data)
             saliency = viz.VisualizeImageGrayscale(saliency.cpu())
 
             for cutoff in cutoffs:
                 protected_region = attackImportant(saliency.cpu().numpy(), cutoff=cutoff)
 
                 if attack_method == 'single_step':
-                    adversarial_image = single_step_perturb(model, copy.deepcopy(transf(inputs)), protected = protected_region)                                          
+                    adversarial_image = single_step_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                                          
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'gray_out':
-                    gray_image = gray_out(model, copy.deepcopy(transf(inputs)), protected = protected_region)
+                    gray_image = gray_out(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
                     gray_confidence = F.softmax(model(normalized_transf(adversarial_image)), dim=1)
                     gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
                     correct = confidence_for_class - gray_confidence_for_class
                 elif attack_method == "iterative":
-                    adversarial_image = iterative_perturb(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_image = iterative_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == "second_order":
-                    adversarial_image = vat_attack(model, copy.deepcopy(transf(inputs)), protected = protected_region)
+                    adversarial_image = vat_attack(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
 

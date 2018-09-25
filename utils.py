@@ -50,8 +50,9 @@ def load_data(batch_size, num_images, transf, dataset='imagenet'):
         indices = list(range(0, len(image_files), batch_size))
         for batch_idx, start in enumerate(indices):
             batch = image_files[start: start + batch_size]
-            raw_images = [transf(viz.pil_loader(x)) for x in batch]            
-            raw_images = torch.stack(raw_images)
+            # raw_images = [transf(viz.pil_loader(x)) for x in batch]            
+            # raw_images = torch.stack(raw_images)
+            raw_images = [viz.pil_loader(x) for x in batch]                        
             batches.append(raw_images)
         return batches
 
