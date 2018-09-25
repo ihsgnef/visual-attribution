@@ -76,6 +76,66 @@ def iterative_perturb(model, X_nat, y=None, epsilon=2.0/255.0, protected=None):
     return perturbed_X
 
 
+def 
+    output = model(X)
+    if y is None:
+        y = output.max(1)[1]
+    loss = F.cross_entropy(output, y)
+    loss.backward()
+ 
+    X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
+    return X
+
+
+# uses no l1 (we want the adversary to attack everything. Though it could be extended to do a form of sparse adversarial examples[ref])
+# uses a fixed L2, though the L2 could be set example specific using the change in label if we assume access to the model
+# clips delta to be in the range (-e,e) rather than unbounded.
+# uses a single-step attack (though can be easily extended to iterative)
+
+# notice how the adversary is stronger. We leave future work to explore this in more detail.
+
+def caco_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
+        lambda_t1 = 1
+        lambda_t2 = 1
+        lambda_l2 = 100
+        n_iter = 10        
+
+        batch_size, n_chs, height, width = x.shape
+        delta = torch.zeros((batch_size, n_chs, height * width)).cuda()
+        optimizer = torch.optim.Adam([delta], lr=1e-4)
+        delta = nn.Parameter(delta, requires_grad=True)
+            
+        for i in range(self.n_iter):
+            output = model(x)
+            y = output.max(1)[1]
+
+            x_grad = self.get_input_grad(x, output, y, create_graph=True)
+            x_grad = x_grad.view((batch_size, n_chs, -1))
+
+            hessian_delta_vp, = torch.autograd.grad(
+                x_grad.dot(delta).sum(), x, create_graph=True)
+            hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
+            taylor_1 = x_grad.dot(delta).sum()
+            taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
+            l2_term = F.mse_loss(delta, torch.zeros_like(delta))
+
+            loss = (
+                - self.lambda_t1 * taylor_1
+                - self.lambda_t2 * taylor_2                
+                + self.lambda_l2 * l2_term
+            )
+            
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    
+        delta = delta.view((batch_size, n_chs, height, width)).data
+        protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
+        adv_sign = delta * protected
+        perturbed_X = x.data.cpu().numpy() + epsilon * adv_sign
+        perturbed_X = np.clip(x.data.cpu.numpy(), 0, 1)
+        return Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
+
 def single_step_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     output = model(X)
     if y is None:
@@ -152,9 +212,9 @@ if __name__ == '__main__':
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
-        ('SmoothGrad', SmoothGradExplainer()),        
-        ('Tuned_Sparse', LambdaTunerExplainer()),                                        
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        #('SmoothGrad', SmoothGradExplainer()),        
+        #('Tuned_Sparse', LambdaTunerExplainer()),                                        
+        #('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
 
@@ -196,9 +256,12 @@ if __name__ == '__main__':
 
             for cutoff in cutoffs:
                 protected_region = attackImportant(saliency.cpu().numpy(), cutoff=cutoff)
-
                 if attack_method == 'single_step':
                     adversarial_image = single_step_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                                          
+                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
+                    correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
+                elif attack_method == 'caso_perturb':
+                    adversarial_image = caso_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                                          
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'gray_out':
