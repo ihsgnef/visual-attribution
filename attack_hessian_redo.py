@@ -18,7 +18,7 @@ import utils
 from explainers_redo import zero_grad
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    BatchTuner
+    LambdaTunerExplainer, BatchTuner
 
 import matplotlib.pyplot as plt
 
@@ -26,6 +26,8 @@ import matplotlib.pyplot as plt
 transf = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                      std=[0.229, 0.224, 0.225])
     ])
 
 
@@ -227,8 +229,8 @@ def saliency_correlation(s1, s2):
     assert s1.shape == s2.shape
     assert s1.ndim == 4
     batch_size = s1.shape[0]
-    s1 = viz.agg_default(s1)
-    s2 = viz.agg_default(s2)
+    s1 = viz.agg_clip(s1)
+    s2 = viz.agg_clip(s2)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
     return [spearmanr(x1, x2).correlation for x1, x2 in zip(s1, s2)]
@@ -237,8 +239,8 @@ def saliency_correlation(s1, s2):
 def saliency_overlap(s1, s2):
     assert s1.shape == s2.shape
     batch_size = s1.shape[0]
-    s1 = viz.agg_default(s1)
-    s2 = viz.agg_default(s2)
+    s1 = viz.agg_clip(s1)
+    s2 = viz.agg_clip(s2)
     s1 = s1.reshape(batch_size, -1)
     s2 = s2.reshape(batch_size, -1)
     scores = []
@@ -348,6 +350,7 @@ def setup_imagenet(batch_size=16, example_ids=None,
 def run_attack(n_examples=4):
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
+    # example_ids = example_ids[:n_examples]
     n_examples = len(example_ids)
     model, batches = setup_imagenet(example_ids=example_ids)
 
@@ -357,7 +360,7 @@ def run_attack(n_examples=4):
     ]
 
     explainers = [
-        ('CASO', SparseExplainer()),
+        # ('CASO', SparseExplainer()),
         # ('Robust', RobustSparseExplainer()),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
@@ -480,18 +483,19 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
     return results, all_ids, all_images, all_labels
 
 
-def plot_explainer_attacker(n_examples=4, agg_func=viz.agg_clip):
+def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
     model, batches = setup_imagenet(n_examples=n_examples)
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
-        ('Ghorbani', GhorbaniAttack()),
-        ('Random', ScaledNoiseAttack()),
+        # ('Ghorbani', GhorbaniAttack()),
+        # ('Random', ScaledNoiseAttack()),
     ]
 
     explainers = [
         # ('CASO', SparseExplainer()),
-        ('CASO', BatchTuner()),
+        ('Batch', BatchTuner()),
+        # ('CASO', LambdaTunerExplainer()),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -591,7 +595,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
     plot_matrix(matrix, 'figures/l1_l2.pdf')
 
 
-def plot_histogram_l1(n_examples=4, agg_func=viz.agg_default):
+def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
     l1s = [0, 0.1, 0.5, 1, 10, 100]
     explainers = []
     for l1 in l1s:

@@ -76,17 +76,6 @@ def iterative_perturb(model, X_nat, y=None, epsilon=2.0/255.0, protected=None):
     return perturbed_X
 
 
-def 
-    output = model(X)
-    if y is None:
-        y = output.max(1)[1]
-    loss = F.cross_entropy(output, y)
-    loss.backward()
- 
-    X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
-    return X
-
-
 # uses no l1 (we want the adversary to attack everything. Though it could be extended to do a form of sparse adversarial examples[ref])
 # uses a fixed L2, though the L2 could be set example specific using the change in label if we assume access to the model
 # clips delta to be in the range (-e,e) rather than unbounded.
@@ -246,7 +235,7 @@ if __name__ == '__main__':
         original_confidence = F.softmax(forward_pass, dim=1)        
         confidence_for_class = original_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
 
-        raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
+        # raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
         #all_saliency_maps = []                
 
         for method_name, explainer in explainers:

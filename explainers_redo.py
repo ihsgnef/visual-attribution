@@ -279,7 +279,8 @@ class LambdaTunerExplainer:
         # get initial explanation
         saliency = SparseExplainer(lambda_l1=lambda_1,
                                    lambda_l2=lambda_2).explain(model, x)
-        current_median_difference = viz.get_median_difference(saliency)
+        current_median_difference = viz.get_median_difference(
+            viz.agg_clip(saliency.cpu().numpy()))
         print('lambda_1', lambda_1, 'lambda_2', lambda_2,
               'current_median_difference', current_median_difference)
 
@@ -296,7 +297,8 @@ class LambdaTunerExplainer:
             if best_median > 0.945:  # return
                 saliency = SparseExplainer(
                     lambda_l1=lambda_1, lambda_l2=lambda_2).explain(model, x)
-                current_median_difference = viz.get_median_difference(saliency)
+                current_median_difference = viz.get_median_difference(
+                    viz.agg_clip(saliency.cpu().numpy()))
                 print('Final Lambda_1', lambda_1,
                       'Final_Lambda_2', lambda_2,
                       'Final_Median', current_median_difference)
@@ -314,7 +316,8 @@ class LambdaTunerExplainer:
             saliency = SparseExplainer(
                 lambda_l1=lambda_1,
                 lambda_l2=lambda_2).explain(model, x)
-            current_median_difference = viz.get_median_difference(saliency)
+            current_median_difference = viz.get_median_difference(
+                viz.agg_clip(saliency.cpu().numpy()))
             print('lambda_1', lambda_1, 'lambda_2', lambda_2,
                   'current_median_difference', current_median_difference)
 
@@ -329,7 +332,8 @@ class LambdaTunerExplainer:
             if best_median > 0.945:  # return
                 saliency = SparseExplainer(
                     lambda_l1=lambda_1, lambda_l2=lambda_2).explain(model, x)
-                current_median_difference = viz.get_median_difference(saliency)
+                current_median_difference = viz.get_median_difference(
+                    viz.agg_clip(saliency.cpu().numpy()))
                 print('Final Lambda_1', lambda_1,
                       'Final_Lambda_2', lambda_2,
                       'Final_Median', current_median_difference)
@@ -347,7 +351,8 @@ class LambdaTunerExplainer:
             saliency = SparseExplainer(
                 lambda_l1=lambda_1,
                 lambda_l2=lambda_2).explain(model, x)
-            current_median_difference = viz.get_median_difference(saliency)
+            current_median_difference = viz.get_median_difference(
+                viz.agg_clip(saliency.cpu().numpy()))
             print('lambda_1', lambda_1, 'lambda_2', lambda_2,
                   'current_median_difference', current_median_difference)
 
@@ -357,7 +362,8 @@ class LambdaTunerExplainer:
 
         saliency = SparseExplainer(
             lambda_l1=lambda_1, lambda_l2=lambda_2).explain(model, x)
-        current_median_difference = viz.get_median_difference(saliency)
+        current_median_difference = viz.get_median_difference(
+            viz.agg_clip(saliency.cpu().numpy()))
         print('Final Lambda_1', lambda_1,
               'Final_Lambda_2', lambda_2,
               'Final_Median', current_median_difference)
@@ -421,13 +427,30 @@ class SmoothGradExplainer:
 
 class BatchTuner:
 
-    def __init__(self, times_input=False):
-        self.times_input = times_input
+    def __init__(self,
+                 lambda_t1=1,
+                 lambda_t2=1,
+                 n_iter=10,
+                 optim='adam',
+                 lr=1e-4,
+                 init='zero',
+                 times_input=False,
+                 ):
+        self.sparse_args = {
+            'lambda_t1': lambda_t1,
+            'lambda_t2': lambda_t2,
+            'n_iter': n_iter,
+            'optim': optim,
+            'lr': lr,
+            'init': init,
+            'times_input': times_input,
+        }
 
     def explain_one(self, model, x):
         l1_lo, l1_hi = 0.01, 2e5
         l2_lo, l2_hi = 1e2, 1e8
         n_steps = 16
+        n_iter = 3
 
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
@@ -435,38 +458,42 @@ class BatchTuner:
         x_l1 = x.repeat(n_steps, 1, 1, 1)
         x_l2 = x.repeat(n_steps, 1, 1, 1)
 
-        l1s = np.geomspace(l1_lo, l1_hi, n_steps)
-        l2s = np.geomspace(l2_lo, l2_hi, n_steps)
-        # print(l1s, l2s)
+        for i in range(n_iter):
+            l1s = np.geomspace(l1_lo, l1_hi, n_steps)
+            l2s = np.geomspace(l2_lo, l2_hi, n_steps)
+            # print(l1s, l2s)
 
-        l1 = Variable(torch.FloatTensor(l1s).cuda())
-        saliency = SparseExplainer(
-            lambda_l1=l1, lambda_l2=l2s[0]).explain(model, x_l1)
+            l1 = Variable(torch.FloatTensor(l1s).cuda())
+            saliency = SparseExplainer(
+                lambda_l1=l1, lambda_l2=l2s[0],
+                **self.sparse_args).explain(model, x_l1)
 
-        s1 = saliency.cpu().numpy()
-        s1 = viz.agg_clip(s1)
-        medians = [viz.get_median_difference(x) for x in s1]
-        l1_best_id = np.argmax(medians)
-        l1_best = l1s[l1_best_id]
-        # l1_lo = l1s[max(l1_best_id - 1, 0)]
-        # l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
+            s1 = saliency.cpu().numpy()
+            s1 = viz.agg_clip(s1)
+            medians = [viz.get_median_difference(x) for x in s1]
+            l1_best_id = np.argmax(medians)
+            l1_best = l1s[l1_best_id]
+            l1_lo = l1s[max(l1_best_id - 1, 0)]
+            l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
 
-        if medians[l1_best_id] > 0.945:
-            saliency = saliency[l1_best_id].unsqueeze(0)
-            return saliency, l1_best, l2s[0]
+            if medians[l1_best_id] > 0.945:
+                saliency = saliency[l1_best_id].unsqueeze(0)
+                return saliency, l1_best, l2s[0]
 
-        l2 = Variable(torch.FloatTensor(l2s).cuda())
-        saliency = SparseExplainer(
-            lambda_l1=l1_best, lambda_l2=l2).explain(model, x_l2)
-        s2 = saliency.cpu().numpy()
-        s2 = viz.agg_clip(s2)
-        medians = [viz.get_median_difference(x) for x in s2]
-        l2_best_id = np.argmax(medians)
-        l2_best = l2s[l2_best_id]
-        # l2_lo = l2s[max(l2_best_id - 1, 0)]
-        # l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
+            l2 = Variable(torch.FloatTensor(l2s).cuda())
+            saliency = SparseExplainer(
+                lambda_l1=l1_best, lambda_l2=l2,
+                **self.sparse_args).explain(model, x_l2)
+            s2 = saliency.cpu().numpy()
+            s2 = viz.agg_clip(s2)
+            medians = [viz.get_median_difference(x) for x in s2]
+            l2_best_id = np.argmax(medians)
+            l2_best = l2s[l2_best_id]
+            l2_lo = l2s[max(l2_best_id - 1, 0)]
+            l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
 
-        saliency = saliency[l2_best_id].unsqueeze(0)
+            print('{}: {}-{}, {}-{}'.format(i, l1_lo, l1_hi, l2_lo, l2_hi))
+            saliency = saliency[l2_best_id].unsqueeze(0)
         return saliency, l1_best, l2_best
 
     def explain(self, model, xs, get_lambdas=False):
@@ -478,9 +505,6 @@ class BatchTuner:
             l1_best.append(l1)
             l2_best.append(l2)
         saliency = torch.cat(saliency, dim=0)
-
-        if self.times_input:
-            saliency *= xs
 
         if get_lambdas:
             return saliency, l1_best, l2_best
