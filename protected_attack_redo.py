@@ -3,7 +3,7 @@ import torch
 import viz
 import utils
 from create_explainer import get_explainer
-from preprocess import get_preprocess
+from preprocess import get_preprocess, get_normalize_preprocess
 import copy
 from collections import Iterable
 import torch.nn as nn
@@ -217,16 +217,16 @@ def attackUnImportant(saliency, cutoff = 10):
 if __name__ == '__main__':
     #dataset = 'cifar10'
     dataset = 'imagenet'
-    transf = get_preprocess('resnet18', 'sparse',dataset)
+    transf, normalized_transf = get_normalize_preprocess('resnet18', 'sparse',dataset)
     #transf = get_preprocess('resnet50', 'sparse',dataset)
     #model = utils.load_model('cifar50')
     model = utils.load_model('resnet18')
     model.cuda()
     model.eval()
-
+    
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
-        #('Random', None),
+        ('Random', None),
         #('SmoothGrad', SmoothGradExplainer()),        
         #('Tuned_Sparse', LambdaTunerExplainer()),                                        
         #('IntegratedGrad', IntegrateGradExplainer()),
@@ -239,14 +239,22 @@ if __name__ == '__main__':
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100]
     #cutoffs = [0,1,2,3,4,5,6,7,8,9,10]
-    num_images = 16#4#128
+    num_images = 100#4
 
     batch_size = 1#16
-    attack_method = 'single_step'#'caso_perturb'
+    attack_method = 'single_step'
+
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
-        inputs = Variable(batch.cuda(), requires_grad=True)
-        forward_pass = model(inputs)
+        unnormalized_inputs = [transf(x) for x in batch]            
+        unnormalized_inputs = torch.stack(unnormalized_inputs)
+        unnormalized_inputs = Variable(unnormalized_inputs.cuda(), requires_grad=True)
+
+        normalized_inputs = [normalized_transf(x) for x in batch]            
+        normalized_inputs = torch.stack(normalized_inputs)
+        normalized_inputs = Variable(normalized_inputs.cuda(), requires_grad=True)
+
+        forward_pass = model(normalized_inputs)
         original_prediction = forward_pass.max(1, keepdim=True)[1]
         original_confidence = F.softmax(forward_pass, dim=1)
         #confidence_for_prediction = original_confidence[original_prediction]#.max(1, keepdim=True)
@@ -257,60 +265,68 @@ if __name__ == '__main__':
         # raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
         #all_saliency_maps = []                
 
+        just_normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                         std=[0.229, 0.224, 0.225])
+
         for method_name, explainer in explainers:
             if method_name == "Random":
-                saliency = torch.from_numpy(np.random.rand(*inputs.shape)).float()
+                saliency = torch.from_numpy(np.random.rand(*unnormalized_inputs.shape)).float()
             else:
-                saliency = explainer.explain(model, copy.deepcopy(inputs).data)
+                saliency = explainer.explain(model, copy.deepcopy(unnormalized_inputs).data)
             saliency = viz.VisualizeImageGrayscale(saliency.cpu())
 
             for cutoff in cutoffs:
                 protected_region = attackImportant(saliency.cpu().numpy(), cutoff=cutoff)
-                if attack_method == 'single_step':
-                    adversarial_image = single_step_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
-                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                if attack_method == 'single_step':                    
+                    adversarial_image = single_step_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                    
+                    adversarial_image = Variable(just_normalize(adversarial_image.data[0]).cuda().unsqueeze(0))
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]                    
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'caso_perturb':
-                    adversarial_image = caso_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
+                    adversarial_image = caso_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                                          
+                    adversarial_image = Variable(just_normalize(adversarial_image.data[0]).cuda().unsqueeze(0))
                     adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'gray_out':
-                    gray_image = gray_out(model, copy.deepcopy(inputs), protected = protected_region)
+                    gray_image = gray_out(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
+                    gray_image = Variable(just_normalize(gray_image.data[0]).cuda().unsqueeze(0))
                     gray_confidence = F.softmax(model(gray_image), dim=1)
                     gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
                     correct = confidence_for_class - gray_confidence_for_class
                 elif attack_method == "iterative":
-                    adversarial_image = iterative_perturb(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_image = iterative_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
+                    adversarial_image = Variable(just_normalize(adversarial_image.data[0]).cuda().unsqueeze(0))
                     adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == "second_order":
-                    adversarial_image = vat_attack(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_image = vat_attack(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
+                    adversarial_image = Variable(just_normalize(adversarial_image.data[0]).cuda().unsqueeze(0))
                     adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
 
                 cutoff_scores[method_name][int(cutoff/10)] += float(correct / batch_size)
                             
                 protected_region = np.repeat(protected_region[:, np.newaxis, :, :], 3, axis=1)                
-                all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
+                #all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
 
-        continue
-        plt.figure(figsize=(25, 15))
-        plt.subplot(3, 5, 1)
+        # continue
+        # plt.figure(figsize=(25, 15))
+        # plt.subplot(3, 5, 1)
         
-        raw_img = np.swapaxes(raw_img, 1,2)
-        plt.imshow(np.swapaxes(raw_img, 0,2))
-        plt.axis('off')
-        plt.title('Dog')
-        for i, saliency in enumerate(all_saliency_maps):                    
-            plt.subplot(3, 5, i + 2 + i // 4)                                
-            saliency = saliency[0]
-            saliency = np.swapaxes(saliency, 1,2)
-            plt.imshow(np.swapaxes(saliency, 0,2))#, cmap=P.cm.gray, vmin=0, vmax=1)
+        # raw_img = np.swapaxes(raw_img, 1,2)
+        # plt.imshow(np.swapaxes(raw_img, 0,2))
+        # plt.axis('off')
+        # plt.title('Dog')
+        # for i, saliency in enumerate(all_saliency_maps):                    
+        #     plt.subplot(3, 5, i + 2 + i // 4)                                
+        #     saliency = saliency[0]
+        #     saliency = np.swapaxes(saliency, 1,2)
+        #     plt.imshow(np.swapaxes(saliency, 0,2))#, cmap=P.cm.gray, vmin=0, vmax=1)
 
-            plt.axis('off')        
-            #plt.title("")
-        plt.tight_layout()
-        plt.savefig('output/protected_attack.png')
+        #     plt.axis('off')        
+        #     #plt.title("")
+        # plt.tight_layout()
+        # plt.savefig('output/protected_attack.png')
 
 
     with open("protected_results.txt", "a") as text_file:
