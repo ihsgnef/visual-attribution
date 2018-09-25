@@ -152,9 +152,9 @@ if __name__ == '__main__':
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
-        #('SmoothGrad', SmoothGradExplainer()),        
-        #('Tuned_Sparse', LambdaTunerExplainer()),                                        
-        #('IntegratedGrad', IntegrateGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),        
+        ('Tuned_Sparse', LambdaTunerExplainer()),                                        
+        ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
 
@@ -164,7 +164,7 @@ if __name__ == '__main__':
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100]
     cutoffs = #[0,1,2,3,4,5,6,7,8,9,10]
-    num_images = 4#128
+    num_images = 1000#4#128
 
     batch_size = 1#16
     attack_method = 'second_order'
