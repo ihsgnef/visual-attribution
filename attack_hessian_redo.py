@@ -250,6 +250,15 @@ def saliency_overlap(s1, s2):
     return scores
 
 
+def get_prediction(model, batch, to_human=True):
+    from imagenet1000_clsid_to_human import clsid_to_human
+    ys = model(Variable(batch)).max(1)[1].data
+    if to_human:
+        return [clsid_to_human[y] for y in ys]
+    else:
+        return ys
+
+
 def attack_batch(model, batch, explainers, attackers,
                  return_saliency=False):
     results = []
@@ -339,9 +348,9 @@ def setup_imagenet(batch_size=16, example_ids=None,
 def run_attack(n_examples=4):
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
-
     n_examples = len(example_ids)
     model, batches = setup_imagenet(example_ids=example_ids)
+
     attackers = [
         ('Ghorbani', GhorbaniAttack()),
         ('Random', ScaledNoiseAttack()),
@@ -349,39 +358,6 @@ def run_attack(n_examples=4):
 
     explainers = [
         ('CASO', SparseExplainer()),
-        # ('Robust', RobustSparseExplainer()),
-        ('Gradient', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
-    ]
-    results = []
-    n_batches = int(n_examples / 16)
-    for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
-        ids, xs, ys = batch
-        xs = torch.stack([transf(x) for x in xs]).cuda()
-        rows = attack_batch(model, xs, explainers, attackers)
-        for i, row in enumerate(rows):
-            rows[i]['idx'] = ids[row['idx']]
-        results += rows
-    df = pd.DataFrame(results)
-    df.to_pickle('ghorbani_1000_baselines.pkl')
-    df.drop(['idx'], axis=1)
-    print(df.groupby(['attacker', 'explainer']).mean())
-
-
-def run_attack_tuner(n_examples):
-    with open('ghorbani.json') as f:
-        example_ids = json.load(f)
-
-    n_examples = len(example_ids)
-    model, batches = setup_imagenet(example_ids=example_ids)
-    attackers = [
-        ('Ghorbani', GhorbaniAttack()),
-        ('Random', ScaledNoiseAttack()),
-    ]
-
-    explainers = [
-        # ('CASO', SparseExplainer()),
         # ('Robust', RobustSparseExplainer()),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
@@ -445,11 +421,12 @@ def get_saliency_maps(model, batches, explainers):
     all_ids = []
     for batch_idx, batch in enumerate(batches):
         ids, images, labels = batch
-        for idx, img, lab in zip(ids, images, labels):
-            all_images[idx] = img
-            all_labels[idx] = lab
-            all_ids.append(idx)
         xs = torch.stack([transf(x) for x in images]).cuda()
+        ys = get_prediction(model, xs)
+        for i, (idx, img, lab) in enumerate(zip(ids, images, labels)):
+            all_images[idx] = img
+            all_labels[idx] = ys[i]
+            all_ids.append(idx)
         for mth_name, explainer in explainers:
             saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
             if hasattr(explainer, 'history'):
@@ -484,13 +461,15 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
     all_ids = []
     for batch_idx, batch in enumerate(batches):
         ids, images, labels = batch
-        for idx, img, lab in zip(ids, images, labels):
-            all_images[idx] = img
-            all_labels[idx] = lab
-            all_ids.append(idx)
+
         xs = torch.stack([transf(x) for x in images]).cuda()
+        ys = get_prediction(model, xs)
         rows = attack_batch(model, xs, explainers, attackers,
                             return_saliency=True)
+        for i, (idx, img, lab) in enumerate(zip(ids, images, labels)):
+            all_images[idx] = img
+            all_labels[idx] = ys[i]
+            all_ids.append(idx)
         for i, row in enumerate(rows):
             row['idx'] = ids[row['idx']]
             attacker = row['attacker']
@@ -502,7 +481,7 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
 
 
 def plot_explainer_attacker(n_examples=4, agg_func=viz.agg_clip):
-    model, batches = setup_imagenet(batch_size=1, n_examples=n_examples)
+    model, batches = setup_imagenet(n_examples=n_examples)
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
