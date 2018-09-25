@@ -3,7 +3,7 @@ import torch
 import viz
 import utils
 from create_explainer import get_explainer
-from preprocess import get_preprocess, get_normalize_preprocess
+from preprocess import get_preprocess
 import copy
 from collections import Iterable
 import torch.nn as nn
@@ -35,7 +35,7 @@ def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
         d = torch.rand(x.shape).sub(0.5).cuda()
         d = _l2_normalize(d)
 
-        for _ in range(10):
+        for _ in range(n_iterations):
             model.zero_grad()
             d = Variable(xi * d, requires_grad=True)
             pred_hat = model(x + d)            
@@ -76,66 +76,80 @@ def iterative_perturb(model, X_nat, y=None, epsilon=2.0/255.0, protected=None):
     return perturbed_X
 
 
-def 
-    output = model(X)
-    if y is None:
-        y = output.max(1)[1]
-    loss = F.cross_entropy(output, y)
-    loss.backward()
- 
-    X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
-    return X
-
-
+def get_input_grad(x, output, y, create_graph=False):
+        '''two methods for getting input gradient'''
+        cross_entropy = True
+        if cross_entropy:
+            loss = F.cross_entropy(output, y)
+            x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
+        else:
+            grad_out = torch.zeros_like(output.data)
+            grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
+            x_grad, = torch.autograd.grad(output, x,
+                                          grad_outputs=grad_out,
+                                          create_graph=create_graph)
+        return x_grad
 # uses no l1 (we want the adversary to attack everything. Though it could be extended to do a form of sparse adversarial examples[ref])
 # uses a fixed L2, though the L2 could be set example specific using the change in label if we assume access to the model
 # clips delta to be in the range (-e,e) rather than unbounded.
 # uses a single-step attack (though can be easily extended to iterative)
 
 # notice how the adversary is stronger. We leave future work to explore this in more detail.
+def caso_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
+        # lambda_t1 = 1
+        # lambda_t2 = 1
+        # lambda_l2 = 100
+        # n_iter = 10        
 
-def caco_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
-        lambda_t1 = 1
-        lambda_t2 = 1
-        lambda_l2 = 100
-        n_iter = 10        
-
-        batch_size, n_chs, height, width = x.shape
-        delta = torch.zeros((batch_size, n_chs, height * width)).cuda()
-        optimizer = torch.optim.Adam([delta], lr=1e-4)
-        delta = nn.Parameter(delta, requires_grad=True)
+        # batch_size, n_chs, height, width = x.shape
+        # delta = torch.zeros((batch_size, n_chs, height * width)).cuda()        
+        # delta = nn.Parameter(delta, requires_grad=True)
+        # optimizer = torch.optim.Adam([delta], lr=1e-4)
             
-        for i in range(self.n_iter):
-            output = model(x)
-            y = output.max(1)[1]
+        # for i in range(self.n_iter):
+        #     output = model(x)
+        #     y = output.max(1)[1]
 
-            x_grad = self.get_input_grad(x, output, y, create_graph=True)
-            x_grad = x_grad.view((batch_size, n_chs, -1))
+        #     x_grad = self.get_input_grad(x, output, y, create_graph=True)
+        #     x_grad = x_grad.view((batch_size, n_chs, -1))
 
-            hessian_delta_vp, = torch.autograd.grad(
-                x_grad.dot(delta).sum(), x, create_graph=True)
-            hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
-            taylor_1 = x_grad.dot(delta).sum()
-            taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
-            l2_term = F.mse_loss(delta, torch.zeros_like(delta))
+        #     hessian_delta_vp, = torch.autograd.grad(
+        #         x_grad.dot(delta).sum(), x, create_graph=True)
+        #     hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
+        #     taylor_1 = x_grad.dot(delta).sum()
+        #     taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
+        #     l2_term = F.mse_loss(delta, torch.zeros_like(delta))
 
-            loss = (
-                - self.lambda_t1 * taylor_1
-                - self.lambda_t2 * taylor_2                
-                + self.lambda_l2 * l2_term
-            )
+        #     loss = (
+        #         - self.lambda_t1 * taylor_1
+        #         - self.lambda_t2 * taylor_2                
+        #         + self.lambda_l2 * l2_term
+        #     )
             
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+        #     optimizer.zero_grad()
+        #     loss.backward()
+        #     optimizer.step()
     
-        delta = delta.view((batch_size, n_chs, height, width)).data
+        # delta = delta.view((batch_size, n_chs, height, width)).data
+               # lambda_t1=1,
+               #   lambda_t2=1,
+               #   lambda_l1=1e4,
+               #   lambda_l2=1e5,
+               #   n_iter=10,
+               #   # optim='sgd',
+               #   # lr=0.1,
+               #   optim='adam',
+               #   lr=1e-4,
+               #   init='zero',
+               #   times_input=False, 
+        local_explainer = SparseExplainer(lambda_l1=0, lambda_l2=100)#, lambda_t2=0,lambda_l2=0)
+        delta = local_explainer.explain(model, copy.deepcopy(x).data)        
         protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
-        adv_sign = delta * protected
+        adv_sign = delta.sign().cpu().numpy() * protected
         perturbed_X = x.data.cpu().numpy() + epsilon * adv_sign
-        perturbed_X = np.clip(x.data.cpu.numpy(), 0, 1)
+        perturbed_X = np.clip(perturbed_X, 0, 1)
         return Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
-
+        
 def single_step_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     output = model(X)
     if y is None:
@@ -202,16 +216,16 @@ def attackUnImportant(saliency, cutoff = 10):
 if __name__ == '__main__':
     #dataset = 'cifar10'
     dataset = 'imagenet'
-    transf, normalized_transf = get_normalize_preprocess('resnet18', 'sparse',dataset)
+    transf = get_preprocess('resnet18', 'sparse',dataset)
     #transf = get_preprocess('resnet50', 'sparse',dataset)
     #model = utils.load_model('cifar50')
     model = utils.load_model('resnet18')
     model.cuda()
     model.eval()
-    
+
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
-        ('Random', None),
+        #('Random', None),
         #('SmoothGrad', SmoothGradExplainer()),        
         #('Tuned_Sparse', LambdaTunerExplainer()),                                        
         #('IntegratedGrad', IntegrateGradExplainer()),
@@ -224,84 +238,76 @@ if __name__ == '__main__':
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100]
     #cutoffs = [0,1,2,3,4,5,6,7,8,9,10]
-    num_images = 1000#4
+    num_images = 16#4#128
 
     batch_size = 1#16
-    attack_method = 'second_order'
-
+    attack_method = 'single_step'#'caso_perturb'
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
-        for x in batch:
-            print(type(x))
-        unnormalized_inputs = [transf(x) for x in batch]            
-        unnormalized_inputs = torch.stack(unnormalized_inputs)
-        unnormalized_inputs = Variable(unnormalized_inputs.cuda(), requires_grad=True)
-
-        normalized_inputs = [normalized_transf(x) for x in batch]            
-        normalized_inputs = torch.stack(normalized_inputs)
-        normalized_inputs = Variable(normalized_inputs.cuda(), requires_grad=True)
-        
-        forward_pass = model(normalized_inputs)
+        inputs = Variable(batch.cuda(), requires_grad=True)
+        forward_pass = model(inputs)
         original_prediction = forward_pass.max(1, keepdim=True)[1]
-        original_confidence = F.softmax(forward_pass, dim=1)        
+        original_confidence = F.softmax(forward_pass, dim=1)
+        #confidence_for_prediction = original_confidence[original_prediction]#.max(1, keepdim=True)
         confidence_for_class = original_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
 
         raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
-        #all_saliency_maps = []                
+        all_saliency_maps = []                
 
         for method_name, explainer in explainers:
             if method_name == "Random":
-                saliency = torch.from_numpy(np.random.rand(*unnormalized_inputs.shape)).float()
+                saliency = torch.from_numpy(np.random.rand(*inputs.shape)).float()
             else:
-                saliency = explainer.explain(model, copy.deepcopy(unnormalized_inputs).data)
+                saliency = explainer.explain(model, copy.deepcopy(inputs).data)
             saliency = viz.VisualizeImageGrayscale(saliency.cpu())
 
             for cutoff in cutoffs:
                 protected_region = attackImportant(saliency.cpu().numpy(), cutoff=cutoff)
                 if attack_method == 'single_step':
-                    adversarial_image = single_step_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                                          
-                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
+                    adversarial_image = single_step_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'caso_perturb':
-                    adversarial_image = caso_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)                                          
-                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
+                    adversarial_image = caso_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'gray_out':
-                    gray_image = gray_out(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
-                    gray_confidence = F.softmax(model(normalized_transf(adversarial_image)), dim=1)
+                    gray_image = gray_out(model, copy.deepcopy(inputs), protected = protected_region)
+                    gray_confidence = F.softmax(model(gray_image), dim=1)
                     gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
                     correct = confidence_for_class - gray_confidence_for_class
                 elif attack_method == "iterative":
-                    adversarial_image = iterative_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
-                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
+                    adversarial_image = iterative_perturb(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == "second_order":
-                    adversarial_image = vat_attack(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
-                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
+                    adversarial_image = vat_attack(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
 
                 cutoff_scores[method_name][int(cutoff/10)] += float(correct / batch_size)
                             
-                # protected_region = np.repeat(protected_region[:, np.newaxis, :, :], 3, axis=1)                
-                # all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
-        
-        # plt.figure(figsize=(25, 15))
-        # plt.subplot(3, 5, 1)
-        
-        # raw_img = np.swapaxes(raw_img, 1,2)
-        # plt.imshow(np.swapaxes(raw_img, 0,2))
-        # plt.axis('off')
-        # plt.title('Dog')
-        # for i, saliency in enumerate(all_saliency_maps):                    
-        #     plt.subplot(3, 5, i + 2 + i // 4)                                
-        #     saliency = saliency[0]
-        #     saliency = np.swapaxes(saliency, 1,2)
-        #     plt.imshow(np.swapaxes(saliency, 0,2))#, cmap=P.cm.gray, vmin=0, vmax=1)
+                protected_region = np.repeat(protected_region[:, np.newaxis, :, :], 3, axis=1)                
+                all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
 
-        #     plt.axis('off')        
-        #     #plt.title("")
-        # plt.tight_layout()
-        # plt.savefig('output/protected_attack.png')
+        continue
+        plt.figure(figsize=(25, 15))
+        plt.subplot(3, 5, 1)
+        
+        raw_img = np.swapaxes(raw_img, 1,2)
+        plt.imshow(np.swapaxes(raw_img, 0,2))
+        plt.axis('off')
+        plt.title('Dog')
+        for i, saliency in enumerate(all_saliency_maps):                    
+            plt.subplot(3, 5, i + 2 + i // 4)                                
+            saliency = saliency[0]
+            saliency = np.swapaxes(saliency, 1,2)
+            plt.imshow(np.swapaxes(saliency, 0,2))#, cmap=P.cm.gray, vmin=0, vmax=1)
+
+            plt.axis('off')        
+            #plt.title("")
+        plt.tight_layout()
+        plt.savefig('output/protected_attack.png')
 
 
     with open("protected_results.txt", "a") as text_file:
