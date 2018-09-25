@@ -35,7 +35,7 @@ def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
         d = torch.rand(x.shape).sub(0.5).cuda()
         d = _l2_normalize(d)
 
-        for _ in range(n_iterations):
+        for _ in range(10):
             model.zero_grad()
             d = Variable(xi * d, requires_grad=True)
             pred_hat = model(x + d)            
@@ -149,6 +149,12 @@ if __name__ == '__main__':
     model.cuda()
     model.eval()
 
+    if dataset == 'imagenet':
+        normalized_transf = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                 std=[0.229, 0.224, 0.225])
+    else:
+        normalized_transf = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
+
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
@@ -163,8 +169,8 @@ if __name__ == '__main__':
         cutoff_scores[method_name] = [0] * 11
 
     cutoffs = [0,10,20,30,40,50,60,70,80,90,100]
-    cutoffs = #[0,1,2,3,4,5,6,7,8,9,10]
-    num_images = 1000#4#128
+    #cutoffs = [0,1,2,3,4,5,6,7,8,9,10]
+    num_images = 1000#4
 
     batch_size = 1#16
     attack_method = 'second_order'
@@ -172,14 +178,13 @@ if __name__ == '__main__':
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
         inputs = Variable(batch.cuda(), requires_grad=True)
-        forward_pass = model(inputs)
+        forward_pass = model(normalized_transf(inputs))
         original_prediction = forward_pass.max(1, keepdim=True)[1]
-        original_confidence = F.softmax(forward_pass, dim=1)
-        #confidence_for_prediction = original_confidence[original_prediction]#.max(1, keepdim=True)
+        original_confidence = F.softmax(forward_pass, dim=1)        
         confidence_for_class = original_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
 
         raw_img = batch.cpu().numpy()[0]#viz.pil_loader(batch.cpu().numpy()[0])
-        all_saliency_maps = []                
+        #all_saliency_maps = []                
 
         for method_name, explainer in explainers:
             if method_name == "Random":
@@ -193,45 +198,44 @@ if __name__ == '__main__':
 
                 if attack_method == 'single_step':
                     adversarial_image = single_step_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
-                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
-                elif attack_method == 'single_step':
+                elif attack_method == 'gray_out':
                     gray_image = gray_out(model, copy.deepcopy(inputs), protected = protected_region)
-                    gray_confidence = F.softmax(model(gray_image), dim=1)
+                    gray_confidence = F.softmax(model(normalized_transf(adversarial_image)), dim=1)
                     gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
                     correct = confidence_for_class - gray_confidence_for_class
                 elif attack_method == "iterative":
                     adversarial_image = iterative_perturb(model, copy.deepcopy(inputs), protected = protected_region)
-                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == "second_order":
                     adversarial_image = vat_attack(model, copy.deepcopy(inputs), protected = protected_region)
-                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
 
                 cutoff_scores[method_name][int(cutoff/10)] += float(correct / batch_size)
                             
-                protected_region = np.repeat(protected_region[:, np.newaxis, :, :], 3, axis=1)                
-                all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
-
-        continue
-        plt.figure(figsize=(25, 15))
-        plt.subplot(3, 5, 1)
+                # protected_region = np.repeat(protected_region[:, np.newaxis, :, :], 3, axis=1)                
+                # all_saliency_maps.append(batch.cpu().numpy()[0] * (1 - protected_region))# + (128 * protected_region))
         
-        raw_img = np.swapaxes(raw_img, 1,2)
-        plt.imshow(np.swapaxes(raw_img, 0,2))
-        plt.axis('off')
-        plt.title('Dog')
-        for i, saliency in enumerate(all_saliency_maps):                    
-            plt.subplot(3, 5, i + 2 + i // 4)                                
-            saliency = saliency[0]
-            saliency = np.swapaxes(saliency, 1,2)
-            plt.imshow(np.swapaxes(saliency, 0,2))#, cmap=P.cm.gray, vmin=0, vmax=1)
+        # plt.figure(figsize=(25, 15))
+        # plt.subplot(3, 5, 1)
+        
+        # raw_img = np.swapaxes(raw_img, 1,2)
+        # plt.imshow(np.swapaxes(raw_img, 0,2))
+        # plt.axis('off')
+        # plt.title('Dog')
+        # for i, saliency in enumerate(all_saliency_maps):                    
+        #     plt.subplot(3, 5, i + 2 + i // 4)                                
+        #     saliency = saliency[0]
+        #     saliency = np.swapaxes(saliency, 1,2)
+        #     plt.imshow(np.swapaxes(saliency, 0,2))#, cmap=P.cm.gray, vmin=0, vmax=1)
 
-            plt.axis('off')        
-            #plt.title("")
-        plt.tight_layout()
-        plt.savefig('output/protected_attack.png')
+        #     plt.axis('off')        
+        #     #plt.title("")
+        # plt.tight_layout()
+        # plt.savefig('output/protected_attack.png')
 
 
     with open("protected_results.txt", "a") as text_file:
