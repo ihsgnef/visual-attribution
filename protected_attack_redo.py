@@ -231,6 +231,8 @@ if __name__ == '__main__':
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
+        for x in batch:
+            print(type(x))
         unnormalized_inputs = [transf(x) for x in batch]            
         unnormalized_inputs = torch.stack(unnormalized_inputs)
         unnormalized_inputs = Variable(unnormalized_inputs.cuda(), requires_grad=True)
