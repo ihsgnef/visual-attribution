@@ -488,7 +488,7 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
         f.patches.extend([
             patches.Rectangle(
                 (-0.01, -0.01), 1.02, 1.02, linewidth=6, 
-                edgecolor='#20e530', fill=False,
+                edgecolor='#55e400', fill=False,
                 transform=aax.transAxes)
         ])
     # f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
@@ -566,14 +566,14 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
-        # ('Ghorbani', GhorbaniAttack()),
-        # ('Random', ScaledNoiseAttack()),
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
     ]
 
     explainers = [
         # ('CASO', SparseExplainer()),
         # ('CASO-T', BatchTuner(SparseExplainer)),
-        ('CASO-R', BatchTuner(RobustSparseExplainer)),
+        ('CASO-R', BatchTuner(RobustSparseExplainer, l1_lo=0, l1_hi=0)),
         ('Gradient', VanillaGradExplainer()),
         # ('SmoothGrad', SmoothGradExplainer()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
@@ -582,6 +582,7 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)
     assert len(results) == n_examples
+    df = []
 
     # construct the matrix to be plotted
     matrix = []
@@ -612,12 +613,22 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
                     'cmap': 'gray',
                     'title': title
                 })
+                df.append({
+                    'attacker': attacker,
+                    'explainer': explainer,
+                    'overlap': cell['overlap'],
+                })
             matrix.append(row)
     plot_matrix(matrix, 'figures/explainer_attacker.pdf', fontsize=15)
+    df = pd.DataFrame(df)
+    print(df.groupby(['attacker', 'explainer']).mean())
 
 
 def plot_l1_l2(agg_func=viz.agg_clip):
-    example_ids = ['ILSVRC2012_val_00019603.JPEG']
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+    example_id = 3
+    example_ids = [example_ids[example_id]]
     model, batches = setup_imagenet(example_ids=example_ids)
 
     attackers = [
@@ -626,7 +637,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
     ]
 
     n_steps = 16
-    l1_lo, l1_hi = 0.5, 2000
+    l1_lo, l1_hi = 0.01, 2e5
     l2_lo, l2_hi = 1e2, 1e8
     l1s = np.geomspace(l1_lo, l1_hi, n_steps)
     l2s = np.geomspace(l2_lo, l2_hi, n_steps)
@@ -652,7 +663,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         for i, l2 in enumerate(l2s):
             row = [{
                 'image': image,
-                'title': 'l2={}'.format(l2),
+                'title': 'l2={:.3f}'.format(l2),
                 'rotate_title': True
             }]
             for l1 in l1s:
@@ -670,7 +681,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
                     'title': title,
                 })
             matrix.append(row)
-    plot_matrix(matrix, 'figures/l1_l2.pdf')
+    plot_matrix(matrix, 'figures/l1_l2_{}.pdf'.format(example_id))
 
 
 def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
@@ -700,8 +711,8 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
 
 def plot_goose_1(model, batches, goose_id):
     explainers = [
-        ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
-        # ('CASO', BatchTuner()),
+        # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
+        ('CASO', BatchTuner(SparseExplainer)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -752,7 +763,7 @@ def plot_goose_1(model, batches, goose_id):
         col.append({'image': saliency_3, 'cmap': 'gray'})
         matrix.append(col)
     matrix = list(map(list, zip(*matrix)))
-    plot_matrix(matrix, 'figures/goose_1.pdf')
+    plot_matrix(matrix, 'figures/goose_1_{}.pdf'.format(goose_id))
 
 
 def plot_goose_2_full(model, batches, goose_id):
@@ -818,7 +829,7 @@ def plot_goose_2(model, batches, goose_id):
     }]
     for l1 in l1s:
         cell = results[goose_id][l1]
-        saliency = viz.agg_default(cell['saliency_1'])
+        saliency = viz.agg_clip(cell['saliency_1'])
         med_diff = viz.get_median_difference(saliency)
         row.append({
             'image': saliency,
@@ -840,6 +851,17 @@ def plot_goose():
     plot_goose_2_full(model, batches, goose_id)
 
 
+def plot_cherry_pick():
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+    example_ids = example_ids[:20]
+    model, batches = setup_imagenet(example_ids=example_ids)
+    batches = list(batches)
+    for i, eid in enumerate(example_ids):
+        print(i, eid)
+        plot_goose_1(model, batches, eid)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -852,5 +874,6 @@ if __name__ == '__main__':
         'attacks': plot_explainer_attacker,
         'histogram': plot_histogram_l1,
         'goose': plot_goose,
+        'cherry': plot_cherry_pick,
     }
     fs[args.task]()

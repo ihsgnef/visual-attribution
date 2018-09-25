@@ -189,8 +189,6 @@ class RobustSparseExplainer(SparseExplainer):
                  lambda_l1=1e4,
                  lambda_l2=1e5,
                  n_iter=10,
-                 # optim='sgd',
-                 # lr=0.1,
                  optim='adam',
                  lr=1e-4,
                  init='zero',
@@ -246,7 +244,8 @@ class RobustSparseExplainer(SparseExplainer):
             hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
 
             taylor_1 = x_grad.dot(delta).sum()
-            taylor_2 = (delta - g / 2).dot(hessian_delta_vp)
+            # taylor_2 = (delta - g / 2).dot(hessian_delta_vp)
+            taylor_2 = (delta - g / 2) * hessian_delta_vp
             taylor_2 = F.l1_loss(taylor_2, torch.zeros_like(taylor_2),
                                  reduce=False)
             taylor_2 = taylor_2.sum(2).sum(1) / (n_chs * height * width)
@@ -450,6 +449,10 @@ class BatchTuner:
 
     def __init__(self,
                  Exp,
+                 l1_lo=0.01,
+                 l1_hi=2e5,
+                 l2_lo=1e2,
+                 l2_hi=1e8,
                  lambda_t1=1,
                  lambda_t2=1,
                  n_iter=10,
@@ -468,10 +471,17 @@ class BatchTuner:
             'times_input': times_input,
         }
         self.Exp = Exp
+        self.l1_lo = l1_lo
+        self.l1_hi = l1_hi
+        self.l2_lo = l2_lo
+        self.l2_hi = l2_hi
 
     def explain_one(self, model, x):
-        l1_lo, l1_hi = 0.01, 2e5
-        l2_lo, l2_hi = 1e2, 1e8
+        l1_lo = self.l1_lo
+        l1_hi = self.l1_hi
+        l2_lo = self.l2_lo
+        l2_hi = self.l2_hi
+
         n_steps = 16
         n_iter = 3
 
@@ -482,40 +492,48 @@ class BatchTuner:
         x_l2 = x.repeat(n_steps, 1, 1, 1)
 
         for i in range(n_iter):
-            l1s = np.geomspace(l1_lo, l1_hi, n_steps)
-            l2s = np.geomspace(l2_lo, l2_hi, n_steps)
-            # print(l1s, l2s)
+            l1_best = l1_lo
 
-            l1 = Variable(torch.FloatTensor(l1s).cuda())
-            saliency = self.Exp(
-                lambda_l1=l1, lambda_l2=l2s[0],
-                **self.sparse_args).explain(model, x_l1)
+            if l1_lo < l1_hi:
+                l1s = np.geomspace(l1_lo, l1_hi, n_steps)
+                l1 = Variable(torch.FloatTensor(l1s).cuda())
+                saliency = self.Exp(
+                    lambda_l1=l1, lambda_l2=l2_lo,
+                    **self.sparse_args).explain(model, x_l1)
 
-            s1 = saliency.cpu().numpy()
-            s1 = viz.agg_clip(s1)
-            medians = [viz.get_median_difference(x) for x in s1]
-            l1_best_id = np.argmax(medians)
-            l1_best = l1s[l1_best_id]
-            l1_lo = l1s[max(l1_best_id - 1, 0)]
-            l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
+                s1 = saliency.cpu().numpy()
+                s1 = viz.agg_clip(s1)
+                medians = [viz.get_median_difference(x) for x in s1]
+                l1_best_id = np.argmax(medians)
+                l1_best = l1s[l1_best_id]
+                l1_lo = l1s[max(l1_best_id - 1, 0)]
+                l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
 
-            if medians[l1_best_id] > 0.945:
-                saliency = saliency[l1_best_id].unsqueeze(0)
-                return saliency, l1_best, l2s[0]
+                if medians[l1_best_id] > 0.945:
+                    saliency = saliency[l1_best_id].unsqueeze(0)
+                    return saliency, l1_best, l2_lo
 
-            l2 = Variable(torch.FloatTensor(l2s).cuda())
-            saliency = self.Exp(
-                lambda_l1=l1_best, lambda_l2=l2,
-                **self.sparse_args).explain(model, x_l2)
-            s2 = saliency.cpu().numpy()
-            s2 = viz.agg_clip(s2)
-            medians = [viz.get_median_difference(x) for x in s2]
-            l2_best_id = np.argmax(medians)
-            l2_best = l2s[l2_best_id]
-            l2_lo = l2s[max(l2_best_id - 1, 0)]
-            l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
+            if l2_lo < l2_hi:
+                l2s = np.geomspace(l2_lo, l2_hi, n_steps)
+                l2 = Variable(torch.FloatTensor(l2s).cuda())
+                saliency = self.Exp(
+                    lambda_l1=l1_best, lambda_l2=l2,
+                    **self.sparse_args).explain(model, x_l2)
+                s2 = saliency.cpu().numpy()
+                s2 = viz.agg_clip(s2)
+                medians = [viz.get_median_difference(x) for x in s2]
+                l2_best_id = np.argmax(medians)
+                l2_best = l2s[l2_best_id]
+                l2_lo = l2s[max(l2_best_id - 1, 0)]
+                l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
+                
+                if medians[l2_best_id] > 0.945:
+                    saliency = saliency[l2_best_id].unsqueeze(0)
+                    return saliency, l1_best, l2_best
 
-            print('{}: {}-{}, {}-{}'.format(i, l1_lo, l1_hi, l2_lo, l2_hi))
+            print('{}: {:.3f}, {:.3f} ~ {:.3f}, {:.3f} ~ {:.3f}'.format(
+                i, medians[l2_best_id], 
+                l1_lo, l1_hi, l2_lo, l2_hi))
             saliency = saliency[l2_best_id].unsqueeze(0)
         return saliency, l1_best, l2_best
 

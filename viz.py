@@ -70,16 +70,25 @@ def clip(x):
     if x.ndim == 3:
         batch_size, height, width = x.shape
         x = x.reshape(batch_size, -1)
-        vmax = np.expand_dims(np.percentile(x, 98, axis=1), 1)
-        vmin = np.expand_dims(np.min(x, axis=1), 1)
-        x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
+        vmax = np.percentile(x, 98, axis=1)
+        vmin = np.min(x, axis=1)
+        vdiff = vmax - vmin
+        for i, v in enumerate(vdiff):
+            if np.abs(v) < 1e-10:
+                vdiff[i] = 1
+        vmin = np.expand_dims(vmin, 1)
+        vdiff = np.expand_dims(vdiff, 1)
+        x = np.clip((x - vmin) / vdiff, 0, 1)
         x = x.reshape(batch_size, height, width)
     elif x.ndim == 2:
         height, width = x.shape
         x = x.ravel()
         vmax = np.percentile(x, 98)
         vmin = np.min(x)
-        x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
+        if np.abs(vmax - vmin) < 1e-6:
+            x = np.zeros_like(x)
+        else:
+            x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
         x = x.reshape(height, width)
     return x
 
