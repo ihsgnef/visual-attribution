@@ -24,9 +24,9 @@ def _l2_normalize(d):
     d /= torch.norm(d_reshaped, 2, dim=1, keepdim=True) + 1e-8
     return d
 
-def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
+def vat_attack(model, x, ind=None, epsilon=4.0/255.0, protected=None):
         protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
-        n_iterations = 1
+        n_iterations = 5
         xi = 1e-6
 
         output = model(x)
@@ -55,7 +55,7 @@ def gray_out(model, X, protected=None):
         X = Variable(torch.from_numpy(X).cuda(), requires_grad = True).float()        
         return X
 
-def iterative_perturb(model, X_nat, y=None, epsilon=2.0/255.0, protected=None):
+def iterative_perturb(model, X_nat, y=None, epsilon=4.0/255.0, protected=None):
     protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
     random_perturb = protected * np.random.uniform(-epsilon, epsilon,
                 X_nat.shape) 
@@ -96,7 +96,7 @@ def get_input_grad(x, output, y, create_graph=False):
 # uses a single-step attack (though can be easily extended to iterative)
 
 # notice how the adversary is stronger. We leave future work to explore this in more detail.
-def caso_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
+def caso_perturb(model, x, y=None, epsilon=4.0/255.0, protected=None):
         # lambda_t1 = 1
         # lambda_t2 = 1
         # lambda_l2 = 100
@@ -151,7 +151,7 @@ def caso_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
         perturbed_X = np.clip(perturbed_X, 0, 1)
         return Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
         
-def single_step_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
+def single_step_perturb(model, X, y=None, epsilon=4.0/255.0, protected=None):
     output = model(X)
     if y is None:
         y = output.max(1)[1]
@@ -227,9 +227,9 @@ if __name__ == '__main__':
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
-        #('SmoothGrad', SmoothGradExplainer()),        
-        #('Tuned_Sparse', LambdaTunerExplainer()),                                        
-        #('IntegratedGrad', IntegrateGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),        
+        ('Tuned_Sparse', LambdaTunerExplainer()),                                        
+        ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
 
@@ -241,8 +241,8 @@ if __name__ == '__main__':
     #cutoffs = [0,1,2,3,4,5,6,7,8,9,10]
     num_images = 100#4
 
-    batch_size = 1#16
-    attack_method = 'single_step'
+    batch_size = 1#16#1#16
+    attack_method = 'gray_out'#second_order'
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
