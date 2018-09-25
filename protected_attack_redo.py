@@ -142,19 +142,13 @@ def attackUnImportant(saliency, cutoff = 10):
 if __name__ == '__main__':
     #dataset = 'cifar10'
     dataset = 'imagenet'
-    transf = get_preprocess('resnet18', 'sparse',dataset)
+    transf, normalized_transf = get_normalize_preprocess('resnet18', 'sparse',dataset)
     #transf = get_preprocess('resnet50', 'sparse',dataset)
     #model = utils.load_model('cifar50')
     model = utils.load_model('resnet18')
     model.cuda()
     model.eval()
-
-    if dataset == 'imagenet':
-        normalized_transf = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                 std=[0.229, 0.224, 0.225])
-    else:
-        normalized_transf = transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
-
+    
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
@@ -188,20 +182,20 @@ if __name__ == '__main__':
 
         for method_name, explainer in explainers:
             if method_name == "Random":
-                saliency = torch.from_numpy(np.random.rand(*inputs.shape)).float()
+                saliency = torch.from_numpy(np.random.rand(*transf(inputs).shape)).float()
             else:
-                saliency = explainer.explain(model, copy.deepcopy(inputs).data)
+                saliency = explainer.explain(model, copy.deepcopy(transf(inputs)).data)
             saliency = viz.VisualizeImageGrayscale(saliency.cpu())
 
             for cutoff in cutoffs:
                 protected_region = attackImportant(saliency.cpu().numpy(), cutoff=cutoff)
 
                 if attack_method == 'single_step':
-                    adversarial_image = single_step_perturb(model, copy.deepcopy(inputs), protected = protected_region)                                          
+                    adversarial_image = single_step_perturb(model, copy.deepcopy(transf(inputs)), protected = protected_region)                                          
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == 'gray_out':
-                    gray_image = gray_out(model, copy.deepcopy(inputs), protected = protected_region)
+                    gray_image = gray_out(model, copy.deepcopy(transf(inputs)), protected = protected_region)
                     gray_confidence = F.softmax(model(normalized_transf(adversarial_image)), dim=1)
                     gray_confidence_for_class = gray_confidence.cpu().data.numpy()[0][original_prediction.cpu().data.numpy()][0][0]
                     correct = confidence_for_class - gray_confidence_for_class
@@ -210,7 +204,7 @@ if __name__ == '__main__':
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
                 elif attack_method == "second_order":
-                    adversarial_image = vat_attack(model, copy.deepcopy(inputs), protected = protected_region)
+                    adversarial_image = vat_attack(model, copy.deepcopy(transf(inputs)), protected = protected_region)
                     adversarial_prediction = model(normalized_transf(adversarial_image)).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
 

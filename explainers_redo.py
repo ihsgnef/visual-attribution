@@ -293,6 +293,18 @@ class LambdaTunerExplainer:
         while (current_median_difference >= best_median
                or abs(current_median_difference - best_median) < patience):
             best_median = max(current_median_difference, best_median)
+            if best_median > 0.945: # return
+                saliency = SparseExplainer(lambda_l1=lambda_1,
+                    lambda_l2=lambda_2).explain(model, x)
+                current_median_difference = viz.get_median_difference(saliency)
+                print('Final Lambda_1', lambda_1,
+                      'Final_Lambda_2', lambda_2,
+                      'Final_Median', current_median_difference)
+
+                if self.times_input:
+                    saliency *= input_data
+                return saliency, lambda_1, lambda_2 if return_lambdas else saliency
+
             lambda_1 = lambda_1 * increase_rate
 
             saliency = SparseExplainer(
@@ -310,6 +322,18 @@ class LambdaTunerExplainer:
         while (current_median_difference >= best_median
                or abs(current_median_difference - best_median) < patience):
             best_median = max(current_median_difference, best_median)
+            if best_median > 0.945: # return
+                saliency = SparseExplainer(lambda_l1=lambda_1,
+                    lambda_l2=lambda_2).explain(model, x)
+                current_median_difference = viz.get_median_difference(saliency)
+                print('Final Lambda_1', lambda_1,
+                      'Final_Lambda_2', lambda_2,
+                      'Final_Median', current_median_difference)
+
+                if self.times_input:
+                    saliency *= input_data
+                return saliency, lambda_1, lambda_2 if return_lambdas else saliency
+
             lambda_2 = lambda_2 * increase_rate
 
             saliency = SparseExplainer(
