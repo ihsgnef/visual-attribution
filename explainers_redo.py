@@ -201,6 +201,19 @@ class RobustSparseExplainer(SparseExplainer):
                                                     n_iter, optim, lr, init,
                                                     times_input)
 
+    def loss(self, taylor_1, taylor_2, l1_term, l2_term):
+        batch_size = l1_term.shape[0]
+        taylor_2 = (self.lambda_t2 * taylor_2).sum() / batch_size
+        l1_term = (self.lambda_l1 * l1_term).sum() / batch_size
+        l2_term = (self.lambda_l2 * l2_term).sum() / batch_size
+        loss = (
+            - self.lambda_t1 * taylor_1
+            + taylor_2
+            + l1_term
+            + l2_term
+        )
+        return loss
+
     def explain(self, model, x):
         self.history = defaultdict(list)
 
@@ -231,11 +244,26 @@ class RobustSparseExplainer(SparseExplainer):
             hessian_delta_vp, = torch.autograd.grad(
                 x_grad.dot(g).sum(), x, create_graph=True)
             hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
-            taylor_2 = (delta - g / 2).dot(hessian_delta_vp)
-            taylor_2 = F.l1_loss(taylor_2, torch.zeros_like(taylor_2))
+
             taylor_1 = x_grad.dot(delta).sum()
-            l1_term = F.l1_loss(delta, torch.zeros_like(delta))
-            l2_term = F.mse_loss(delta, torch.zeros_like(delta))
+            taylor_2 = (delta - g / 2).dot(hessian_delta_vp)
+            taylor_2 = F.l1_loss(taylor_2, torch.zeros_like(taylor_2),
+                                 reduce=False)
+            taylor_2 = taylor_2.sum(2).sum(1) / (n_chs * height * width)
+
+            l1_term = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
+            l2_term = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
+            l1_term = l1_term.sum(2).sum(1) / (n_chs * height * width)
+            l2_term = l2_term.sum(2).sum(1) / (n_chs * height * width)
+
+            # loss = (
+            #     - self.lambda_t1 * taylor_1
+            #     + self.lambda_t2 * taylor_2
+            #     + self.lambda_l1 * l1_term
+            #     + self.lambda_l2 * l2_term
+            # )
+
+            loss = self.loss(taylor_1, taylor_2, l1_term, l2_term)
 
             # log optimization
             vmax = delta.abs().sum(1).max(1)[0]
@@ -246,13 +274,6 @@ class RobustSparseExplainer(SparseExplainer):
             self.history['hessian'].append(taylor_2.data.cpu().numpy())
             self.history['vmax'].append(vmax.data.cpu().numpy())
             self.history['vmin'].append(vmin.data.cpu().numpy())
-
-            loss = (
-                - self.lambda_t1 * taylor_1
-                + self.lambda_t2 * taylor_2
-                + self.lambda_l1 * l1_term
-                + self.lambda_l2 * l2_term
-            )
 
             optimizer.zero_grad()
             loss.backward()
@@ -428,6 +449,7 @@ class SmoothGradExplainer:
 class BatchTuner:
 
     def __init__(self,
+                 Exp,
                  lambda_t1=1,
                  lambda_t2=1,
                  n_iter=10,
@@ -445,6 +467,7 @@ class BatchTuner:
             'init': init,
             'times_input': times_input,
         }
+        self.Exp = Exp
 
     def explain_one(self, model, x):
         l1_lo, l1_hi = 0.01, 2e5
@@ -464,7 +487,7 @@ class BatchTuner:
             # print(l1s, l2s)
 
             l1 = Variable(torch.FloatTensor(l1s).cuda())
-            saliency = SparseExplainer(
+            saliency = self.Exp(
                 lambda_l1=l1, lambda_l2=l2s[0],
                 **self.sparse_args).explain(model, x_l1)
 
@@ -481,7 +504,7 @@ class BatchTuner:
                 return saliency, l1_best, l2s[0]
 
             l2 = Variable(torch.FloatTensor(l2s).cuda())
-            saliency = SparseExplainer(
+            saliency = self.Exp(
                 lambda_l1=l1_best, lambda_l2=l2,
                 **self.sparse_args).explain(model, x_l2)
             s2 = saliency.cpu().numpy()

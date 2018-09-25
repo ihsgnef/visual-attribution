@@ -27,9 +27,14 @@ import matplotlib.patches as patches
 transf = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        # transforms.Normalize(mean=[0.485, 0.456, 0.406],
-        #                      std=[0.229, 0.224, 0.225])
     ])
+
+# norm_tranf = transforms.Compose([
+#         transforms.Resize((224, 224)),
+#         transforms.ToTensor(),
+#         transforms.Normalize(mean=[0.485, 0.456, 0.406],
+#                              std=[0.229, 0.224, 0.225])
+#     ])
 
 
 def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
@@ -482,11 +487,11 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
         aax = ax[i, j] if len(matrix) > 1 else ax[j]
         f.patches.extend([
             patches.Rectangle(
-                (-0.1, -0.1), 1.1, 1.1, linewidth=6, 
-                edgecolor='g', fill=False,
+                (-0.01, -0.01), 1.02, 1.02, linewidth=6, 
+                edgecolor='#20e530', fill=False,
                 transform=aax.transAxes)
         ])
-    f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
+    # f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
     f.savefig(filename)
 
 
@@ -567,11 +572,11 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
 
     explainers = [
         # ('CASO', SparseExplainer()),
-        ('Batch', BatchTuner()),
-        # ('CASO', LambdaTunerExplainer()),
+        # ('CASO-T', BatchTuner(SparseExplainer)),
+        ('CASO-R', BatchTuner(RobustSparseExplainer)),
         ('Gradient', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        # ('SmoothGrad', SmoothGradExplainer()),
+        # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
     results, ids, images, labels = get_attack_saliency_maps(
