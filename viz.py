@@ -74,7 +74,7 @@ def clip(x):
         vmin = np.expand_dims(np.min(x, axis=1), 1)
         x = np.clip((x - vmin) / (vmax - vmin), 0, 1)
         x = x.reshape(batch_size, height, width)
-    elif x.ndim == 3:
+    elif x.ndim == 2:
         height, width = x.shape
         x = x.ravel()
         vmax = np.percentile(x, 98)
@@ -90,8 +90,8 @@ def agg_clip(x):
 
 def get_median_difference(saliency):
     # compute median difference
-    assert saliency.ndim == 3
-    s = agg_clip(saliency).ravel()
+    # s = agg_clip(saliency).ravel()
+    s = saliency.ravel()
     topk = np.argsort(-s)[:int(s.size * 0.02)]
     botk = np.argsort(s)[:int(s.size * 0.98)]
     top_median = np.median(s[topk])

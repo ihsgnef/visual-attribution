@@ -1,3 +1,4 @@
+import math
 import numpy as np
 from collections import defaultdict
 
@@ -384,40 +385,43 @@ class SmoothGradExplainer:
 
 class BatchTuner:
 
-    def __init__(self):
-        self.explainer = SparseExplainer()
-
     def explain(self, model, xs, return_lambdas=False):
-        l1s = [0.5, 1, 10, 50, 100, 200, 500, 1000, 2000]
-        l2s = [100, 200, 500, 1000, 2000, 5000, 1e4, 2e4, 5e4]
         batch_size, n_chs, height, width = xs.shape
         assert batch_size == 1
 
-        maps = []
-        best_l1s = []
-        best_l2s = []
-        for x in xs:
-            x_l1 = x.clone().repeat(len(l1s), 1, 1, 1)
-            x_l2 = x.clone().repeat(len(l2s), 1, 1, 1)
+        l1_lo, l1_hi = 0.5, 2000
+        l2_lo, l2_hi = 1e2, 1e8
+        n_steps = 16
 
-            self.explainer.lambda_l1 = Variable(torch.FloatTensor(l1s).cuda())
-            self.explainer.lambda_l2 = l2s[0]
+        # creat batch
+        x_l1 = xs.repeat(n_steps, 1, 1, 1)
+        x_l2 = xs.repeat(n_steps, 1, 1, 1)
 
-            saliency = self.explainer.explain(model, x_l1).cpu().numpy()
-            medians = [viz.get_median_difference(s) for s in saliency]
+        for i in range(4):
+            l1s = np.geomspace(l1_lo, l1_hi, n_steps)
+            l2s = np.geomspace(l2_lo, l2_hi, n_steps)
+            # print(l1s, l2s)
+
+            l1 = Variable(torch.FloatTensor(l1s).cuda())
+            saliency = SparseExplainer(
+                lambda_l1=l1, lambda_l2=l2s[0]).explain(model, x_l1)
+            s1 = saliency.cpu().numpy()
+            s1 = viz.agg_clip(s1)
+            medians = [viz.get_median_difference(x) for x in s1]
             l1_best_id = np.argmax(medians)
             l1_best = l1s[l1_best_id]
+            l1_lo = l1s[max(l1_best_id - 1, 0)]
+            l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
 
-            self.explainer.lambda_l1 = l1_best
-            self.explainer.lambda_l2 = Variable(torch.FloatTensor(l2s).cuda())
-
-            saliency = self.explainer.explain(model, x_l2)
-            s = saliency.cpu().numpy()
-            medians = [viz.get_median_difference(x) for x in s]
+            l2 = Variable(torch.FloatTensor(l2s).cuda())
+            saliency = SparseExplainer(
+                lambda_l1=l1_best, lambda_l2=l2).explain(model, x_l2)
+            s2 = saliency.cpu().numpy()
+            s2 = viz.agg_clip(s2)
+            medians = [viz.get_median_difference(x) for x in s2]
             l2_best_id = np.argmax(medians)
-            l2_best = l2s[l2_best_id]
+            l2_lo = l2s[max(l2_best_id - 1, 0)]
+            l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
 
-            maps.append(saliency[l2_best_id])
-            best_l1s.append(l1_best)
-            best_l2s.append(l2_best)
-        return maps[0].unsqueeze(0)
+            saliency = saliency[l2_best_id].unsqueeze(0)
+        return saliency
