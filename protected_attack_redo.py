@@ -150,6 +150,27 @@ def caso_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
         perturbed_X = x.data.cpu().numpy() + epsilon * adv_sign
         perturbed_X = np.clip(perturbed_X, 0, 1)
         return Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
+
+def scaled_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
+    output = model(X)
+    if y is None:
+        y = output.max(1)[1]
+    loss = F.cross_entropy(output, y)
+    loss.backward()
+    grad_sign = X.grad.data.cpu().sign().numpy()    
+
+    batch_size, channels, height, width = X.shape
+
+    budget = channels * height * width * epsilon
+    total_saliency = protected.reshape(batch_size, -1).sum(1)
+    protected /= total_saliency    
+
+    #protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
+    perturbation = grad_sign * protected * budget
+    perturbed_X = X.data.cpu().numpy() + perturbation
+    perturbed_X = np.clip(perturbed_X, 0, 1)
+    X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
+    return X
         
 def single_step_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     output = model(X)
@@ -242,7 +263,7 @@ if __name__ == '__main__':
     num_images = 100#4
 
     batch_size = 1#16
-    attack_method = 'single_step'
+    attack_method = 'scaled'
 
     batches = utils.load_data(batch_size=batch_size, num_images = num_images, transf=transf, dataset=dataset)
     for batch in batches:
@@ -295,6 +316,11 @@ if __name__ == '__main__':
                     correct = confidence_for_class - gray_confidence_for_class
                 elif attack_method == "iterative":
                     adversarial_image = iterative_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
+                    adversarial_image = Variable(just_normalize(adversarial_image.data[0]).cuda().unsqueeze(0))
+                    adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
+                    correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
+                elif attack_method == "scaled":
+                    adversarial_image = scaled_perturb(model, copy.deepcopy(unnormalized_inputs), protected = protected_region)
                     adversarial_image = Variable(just_normalize(adversarial_image.data[0]).cuda().unsqueeze(0))
                     adversarial_prediction = model(adversarial_image).max(1, keepdim=True)[1]
                     correct = original_prediction.eq(adversarial_prediction).sum().cpu().data.numpy()
