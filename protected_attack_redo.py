@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torchvision
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer
+    LambdaTunerExplainer, BatchTuner
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
@@ -228,7 +228,7 @@ if __name__ == '__main__':
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
         ('SmoothGrad', SmoothGradExplainer()),        
-        ('Tuned_Sparse', LambdaTunerExplainer()),                                        
+        ('Tuned_Sparse', BatchTuner(SparseExplainer)),                                        
         ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
