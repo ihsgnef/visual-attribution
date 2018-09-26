@@ -437,7 +437,8 @@ class SmoothGradExplainer:
         total_gradients = 0
         for i in range(self.nsamples):
             noise = torch.randn(x.shape).cuda() * stdev
-            x_var = noise + x.clone()
+            # x_var = noise + x.clone()
+            x_var = x.clone()
             grad = self.base_explainer.explain(model, x_var)
             if self.magnitude:
                 total_gradients += grad ** 2
@@ -461,13 +462,18 @@ class SmoothCASO:
         for key in lambda_vectors:
             ls = [l[key] for l in lambdas]
             lambda_vectors[key] = Variable(torch.FloatTensor(ls).cuda())
-        exp = SmoothGradExplainer(SparseExplainer(**lambda_vectors))
+        exp = SmoothGradExplainer(SparseExplainer(**lambda_vectors),
+                                  nsamples=1, magnitude=False)
         return exp.explain(model, x)
 
 
 class BatchTuner:
 
-    def __init__(self, Exp, tunables=None, n_steps=16, n_search=3,
+    def __init__(self, Exp,
+                 l1_lo=1e-1, l1_hi=2e5,
+                 l2_lo=1, l2_hi=1e6,
+                 t2_lo=1, t2_hi=1,
+                 n_steps=16, n_search=3,
                  n_iter=10, optim='adam', lr=1e-4, init='zero',
                  times_input=False):
         self.sparse_args = {
@@ -478,13 +484,11 @@ class BatchTuner:
             'times_input': times_input,
         }
         self.Exp = Exp
-        if tunables is None:
-            tunables = OrderedDict({
-                'lambda_t2': (1, 1),
-                'lambda_l1': (1e-2, 2e5),
-                'lambda_l2': (1, 1e6),
-            })
-        self.tunables = tunables
+        self.tunables = OrderedDict({
+            'lambda_t2': (t2_lo, t2_hi),
+            'lambda_l1': (l1_lo, l1_hi),
+            'lambda_l2': (l2_lo, l2_hi),
+        })
         self.n_steps = n_steps
         self.n_search = n_search
 
@@ -518,11 +522,11 @@ class BatchTuner:
                     best_median = medians[best_idx]
                     best_saliency = saliency[best_idx]
                 if best_median > 0.945:
-                    return best_saliency, best_lambdas
-            output = '{}: {:.3f}'.format(i, best_median)
-            for param, (lo, hi) in tunables.items():
-                output += ' {}: {:.3f} ~ {:.3f}'.format(param, lo, hi)
-            print(output)
+                    break
+        output = '{}: {:.3f}'.format(i, best_median)
+        for param, (lo, hi) in tunables.items():
+            output += ' {}: {:.3f} ~ {:.3f}'.format(param, lo, hi)
+        print(output)
         return best_saliency, best_lambdas
 
     def explain(self, model, xs, get_lambdas=False):

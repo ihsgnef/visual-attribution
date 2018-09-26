@@ -398,7 +398,7 @@ def run_attack_tuner(n_examples=4):
         ('Ghorbani', GhorbaniAttack()),
         ('Random', ScaledNoiseAttack()),
     ]
-    mth_name, explainer = ('CASO', BatchTuner())
+    mth_name, explainer = ('CASO', BatchTuner(n_steps=12))
     results = []
     n_batches = int(n_examples / 16)
     for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
@@ -574,18 +574,8 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
 
     explainers = [
         ('SmoothCASO', SmoothCASO(n_steps=12)),
-        ('CASO', BatchTuner(SparseExplainer,
-                            tunables=OrderedDict({
-                                'lambda_t2': (1, 1),
-                                'lambda_l1': (1e-2, 2e5),
-                                'lambda_l2': (1, 1e6)}),
-                            n_steps=10)),
-        # ('CASO-R', BatchTuner(RobustSparseExplainer,
-        #                       tunables=OrderedDict({
-        #                           'lambda_t2': (1e3, 1e5),
-        #                           'lambda_l1': (0, 0),
-        #                           'lambda_l2': (1, 1e6)}), 
-        #                       n_steps=10)),
+        ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
+        # ('CASO-R', BatchTuner(RobustSparseExplainer, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -641,7 +631,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         example_ids = json.load(f)
     example_id = 3
     example_ids = [example_ids[example_id]]
-    model, batches = setup_imagenet(example_ids=example_ids)
+    model, batches = setup_imagenet(batch_size=12, example_ids=example_ids)
 
     attackers = [
         # ('Original', EmptyAttack()),
@@ -724,7 +714,8 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
 def plot_goose_1(model, batches, goose_id):
     explainers = [
         # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
-        ('CASO', BatchTuner(SparseExplainer)),
+        ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
+        ('CASO-1', BatchTuner(SparseExplainer, t2_lo=0, t2_hi=0, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
