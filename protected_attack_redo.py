@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import torchvision
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer
+    LambdaTunerExplainer, BatchTuner
 import matplotlib
 matplotlib.use('Agg')
 from matplotlib import pyplot as plt
@@ -24,9 +24,9 @@ def _l2_normalize(d):
     d /= torch.norm(d_reshaped, 2, dim=1, keepdim=True) + 1e-8
     return d
 
-def vat_attack(model, x, ind=None, epsilon=2.0/255.0, protected=None):
+def vat_attack(model, x, ind=None, epsilon=4.0/255.0, protected=None):
         protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
-        n_iterations = 1
+        n_iterations = 5
         xi = 1e-6
 
         output = model(x)
@@ -55,7 +55,7 @@ def gray_out(model, X, protected=None):
         X = Variable(torch.from_numpy(X).cuda(), requires_grad = True).float()        
         return X
 
-def iterative_perturb(model, X_nat, y=None, epsilon=2.0/255.0, protected=None):
+def iterative_perturb(model, X_nat, y=None, epsilon=4.0/255.0, protected=None):
     protected = np.repeat(protected[:, np.newaxis, :, :], 3, axis=1)
     random_perturb = protected * np.random.uniform(-epsilon, epsilon,
                 X_nat.shape) 
@@ -96,7 +96,7 @@ def get_input_grad(x, output, y, create_graph=False):
 # uses a single-step attack (though can be easily extended to iterative)
 
 # notice how the adversary is stronger. We leave future work to explore this in more detail.
-def caso_perturb(model, x, y=None, epsilon=2.0/255.0, protected=None):
+def caso_perturb(model, x, y=None, epsilon=4.0/255.0, protected=None):
         # lambda_t1 = 1
         # lambda_t2 = 1
         # lambda_l2 = 100
@@ -172,7 +172,7 @@ def scaled_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
     X = Variable(torch.from_numpy(perturbed_X).cuda(), requires_grad = True).float()
     return X
         
-def single_step_perturb(model, X, y=None, epsilon=2.0/255.0, protected=None):
+def single_step_perturb(model, X, y=None, epsilon=4.0/255.0, protected=None):
     output = model(X)
     if y is None:
         y = output.max(1)[1]
@@ -248,9 +248,9 @@ if __name__ == '__main__':
     explainers = [
         ('Vanilla', VanillaGradExplainer()),
         ('Random', None),
-        #('SmoothGrad', SmoothGradExplainer()),        
-        #('Tuned_Sparse', LambdaTunerExplainer()),                                        
-        #('IntegratedGrad', IntegrateGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),        
+        ('Tuned_Sparse', BatchTuner(SparseExplainer)),                                        
+        ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
 

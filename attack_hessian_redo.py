@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from scipy.stats import spearmanr
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import torch
 import torch.nn.functional as F
@@ -21,14 +21,20 @@ from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     LambdaTunerExplainer, BatchTuner
 
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 
 transf = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
-        # transforms.Normalize(mean=[0.485, 0.456, 0.406],
-        #                      std=[0.229, 0.224, 0.225])
     ])
+
+# norm_tranf = transforms.Compose([
+#         transforms.Resize((224, 224)),
+#         transforms.ToTensor(),
+#         transforms.Normalize(mean=[0.485, 0.456, 0.406],
+#                              std=[0.229, 0.224, 0.225])
+#     ])
 
 
 def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
@@ -293,8 +299,9 @@ def attack_batch(model, batch, explainers, attackers,
 
 def setup_imagenet(batch_size=16, example_ids=None,
                    n_batches=-1, n_examples=-1,
-                   shuffle=True, dump_name=None):
-    model = utils.load_model('resnet50')
+                   shuffle=True, dump_name=None,
+                   arch='softplus50'):
+    model = utils.load_model(arch)
     model.eval()
     model.cuda()
     print('model loaded')
@@ -347,7 +354,7 @@ def setup_imagenet(batch_size=16, example_ids=None,
     return model, batches
 
 
-def run_attack(n_examples=4):
+def run_attack_baselines(n_examples=4):
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
     # example_ids = example_ids[:n_examples]
@@ -381,7 +388,58 @@ def run_attack(n_examples=4):
     print(df.groupby(['attacker', 'explainer']).mean())
 
 
-def plot_matrix(matrix, filename, fontsize=40):
+def run_attack_tuner(n_examples=4):
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+    # example_ids = example_ids[:n_examples]
+    n_examples = len(example_ids)
+    model, batches = setup_imagenet(example_ids=example_ids)
+    attackers = [
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
+    ]
+    mth_name, explainer = ('CASO', BatchTuner())
+    results = []
+    n_batches = int(n_examples / 16)
+    for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
+        ids, xs, ys = batch
+        xs = torch.stack([transf(x) for x in xs]).cuda()
+        batch = xs
+        rows = []
+        batch_size = batch.shape[0]
+        saliency_1, l11, l21 = explainer.explain(model, batch.clone(),
+                                                 get_lambdas=True)
+        saliency_1 = saliency_1.cpu().numpy()
+        for atk_name, attacker in attackers:
+            perturbed = attacker.attack(model, batch.clone(), saliency_1)
+            perturbed_np = perturbed.cpu().numpy()
+            saliency_2, l12, l22 = explainer.explain(model, perturbed,
+                                                     get_lambdas=True)
+            saliency_2 = saliency_2.cpu().numpy()
+            scores = saliency_overlap(saliency_1, saliency_2)
+            for i in range(batch_size):
+                row = {
+                    'idx': i,
+                    'explainer': mth_name,
+                    'attacker': atk_name,
+                    'overlap': scores[i],
+                    'perturbed': perturbed_np,
+                    'l11': l11[i],
+                    'l21': l21[i],
+                    'l12': l12[i],
+                    'l22': l22[i],
+                }
+                rows.append(row)
+        for i, row in enumerate(rows):
+            rows[i]['idx'] = ids[row['idx']]
+        results += rows
+    df = pd.DataFrame(results)
+    df.to_pickle('ghorbani_1000_tuner.pkl')
+    df.drop(['idx'], axis=1)
+    print(df.groupby(['attacker', 'explainer']).mean())
+
+
+def plot_matrix(matrix, filename, fontsize=40, rects=[]):
     '''Each entry in the matrix should be a dictionary of:
     image: an image ready to be plotted by imshow
     cmap: color map or None
@@ -398,6 +456,8 @@ def plot_matrix(matrix, filename, fontsize=40):
             title = c.get('title', None)
             yalign = c.get('yalign', 0.5)
             rotate_title = c.get('rotate_title', False)
+            xlabel = c.get('xlabel', None)
+
             aax = ax[i, j] if len(matrix) > 1 else ax[j]
             if image is None:
                 aax.imshow(np.zeros((244, 244)), cmap='gray')
@@ -411,9 +471,28 @@ def plot_matrix(matrix, filename, fontsize=40):
                     aax.set_title(title, rotation=90,
                                   x=-0.1, y=yalign, fontsize=fontsize)
                 else:
-                    aax.set_title(c['title'], fontsize=fontsize)
+                    # aax.set_title(c['title'], fontsize=fontsize)
+                    aax.text(0.5, 1.1, title,
+                             horizontalalignment='center',
+                             verticalalignment='center',
+                             transform=aax.transAxes,
+                             fontsize=fontsize)
+            if xlabel is not None:
+                aax.text(0.5, -0.1, xlabel,
+                         horizontalalignment='center',
+                         verticalalignment='center',
+                         transform=aax.transAxes,
+                         fontsize=fontsize)
             aax.set_axis_off()
-    f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
+    for i, j in rects:
+        aax = ax[i, j] if len(matrix) > 1 else ax[j]
+        f.patches.extend([
+            patches.Rectangle(
+                (-0.01, -0.01), 1.02, 1.02, linewidth=6, 
+                edgecolor='#55e400', fill=False,
+                transform=aax.transAxes)
+        ])
+    # f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
     f.savefig(filename)
 
 
@@ -483,19 +562,41 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
     return results, all_ids, all_images, all_labels
 
 
-def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
-    model, batches = setup_imagenet(n_examples=n_examples)
+def plot_explainer_attacker(n_examples=1, agg_func=viz.agg_clip):
+    model, batches = setup_imagenet(batch_size=16, n_examples=n_examples,
+                                    arch='softplus50')
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
-        # ('Ghorbani', GhorbaniAttack()),
-        # ('Random', ScaledNoiseAttack()),
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
     ]
 
     explainers = [
-        # ('CASO', SparseExplainer()),
-        ('Batch', BatchTuner()),
-        # ('CASO', LambdaTunerExplainer()),
+        (
+            'CASO-T',
+            BatchTuner(
+                SparseExplainer,
+                tunables=OrderedDict({
+                    'lambda_t2': (1, 1),
+                    'lambda_l1': (1e-2, 2e5),
+                    'lambda_l2': (1, 1e6),
+                }),
+                n_steps=10,
+            )
+        ),
+        (
+            'CASO-R',
+            BatchTuner(
+                RobustSparseExplainer,
+                tunables=OrderedDict({
+                    'lambda_t2': (1e-2, 1e3),
+                    'lambda_l1': (0, 0),
+                    'lambda_l2': (1, 1e6),
+                }),
+                n_steps=16,
+            )
+        ),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -504,6 +605,7 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)
     assert len(results) == n_examples
+    df = []
 
     # construct the matrix to be plotted
     matrix = []
@@ -534,12 +636,22 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
                     'cmap': 'gray',
                     'title': title
                 })
+                df.append({
+                    'attacker': attacker,
+                    'explainer': explainer,
+                    'overlap': cell['overlap'],
+                })
             matrix.append(row)
     plot_matrix(matrix, 'figures/explainer_attacker.pdf', fontsize=15)
+    df = pd.DataFrame(df)
+    print(df.groupby(['attacker', 'explainer']).mean())
 
 
 def plot_l1_l2(agg_func=viz.agg_clip):
-    example_ids = ['ILSVRC2012_val_00019603.JPEG']
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+    example_id = 3
+    example_ids = [example_ids[example_id]]
     model, batches = setup_imagenet(example_ids=example_ids)
 
     attackers = [
@@ -548,7 +660,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
     ]
 
     n_steps = 16
-    l1_lo, l1_hi = 0.5, 2000
+    l1_lo, l1_hi = 0.01, 2e5
     l2_lo, l2_hi = 1e2, 1e8
     l1s = np.geomspace(l1_lo, l1_hi, n_steps)
     l2s = np.geomspace(l2_lo, l2_hi, n_steps)
@@ -574,7 +686,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         for i, l2 in enumerate(l2s):
             row = [{
                 'image': image,
-                'title': 'l2={}'.format(l2),
+                'title': 'l2={:.3f}'.format(l2),
                 'rotate_title': True
             }]
             for l1 in l1s:
@@ -592,7 +704,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
                     'title': title,
                 })
             matrix.append(row)
-    plot_matrix(matrix, 'figures/l1_l2.pdf')
+    plot_matrix(matrix, 'figures/l1_l2_{}.pdf'.format(example_id))
 
 
 def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
@@ -623,7 +735,7 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
 def plot_goose_1(model, batches, goose_id):
     explainers = [
         # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
-        ('CASO', BatchTuner()),
+        ('CASO', BatchTuner(SparseExplainer)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -674,7 +786,8 @@ def plot_goose_1(model, batches, goose_id):
         col.append({'image': saliency_3, 'cmap': 'gray'})
         matrix.append(col)
     matrix = list(map(list, zip(*matrix)))
-    plot_matrix(matrix, 'figures/goose_1.pdf')
+    plot_matrix(matrix, 'figures/goose_1_{}.pdf'.format(goose_id))
+    print('done', goose_id)
 
 
 def plot_goose_2_full(model, batches, goose_id):
@@ -707,15 +820,16 @@ def plot_goose_2_full(model, batches, goose_id):
             cell = results[goose_id][(l1, l2)]
             saliency = viz.agg_clip(cell['saliency_1'])
             med_diff = viz.get_median_difference(saliency)
-            title = r'$\lambda_1={}$\n'.format(l1) if i == 0 else ''
-            title += '{:.3f}'.format(med_diff)
+            title = r'$\lambda_1={}$'.format(l1) if i == 0 else ''
             row.append({
                 'image': saliency,
                 'cmap': 'gray',
-                'title': title
+                'title': title,
+                'xlabel': r'$\eta={:.3f}$'.format(med_diff),
             })
         matrix.append(row)
-    plot_matrix(matrix, 'figures/goose_2_full.pdf')
+    plot_matrix(matrix, 'figures/goose_2_full.pdf', fontsize=30,
+                rects=[(2, 4)])
 
 
 def plot_goose_2(model, batches, goose_id):
@@ -739,14 +853,17 @@ def plot_goose_2(model, batches, goose_id):
     }]
     for l1 in l1s:
         cell = results[goose_id][l1]
-        saliency = viz.agg_default(cell['saliency_1'])
+        saliency = viz.agg_clip(cell['saliency_1'])
+        med_diff = viz.get_median_difference(saliency)
         row.append({
             'image': saliency,
             'cmap': 'gray',
-            'title': r'$\lambda_1={}$'.format(l1)
+            'title': r'$\lambda_1={}$'.format(l1),
+            'xlabel': r'$\eta={:.3f}$'.format(med_diff),
         })
     matrix = [row]
-    plot_matrix(matrix, 'figures/goose_2.pdf')
+    plot_matrix(matrix, 'figures/goose_2.pdf', fontsize=30,
+                rects=[(1, 4)])
 
 
 def plot_goose():
@@ -758,16 +875,30 @@ def plot_goose():
     plot_goose_2_full(model, batches, goose_id)
 
 
+def plot_cherry_pick():
+    with open('ghorbani.json') as f:
+        example_ids = json.load(f)
+    example_ids = example_ids[20:100]
+    model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)
+    batches = list(batches)
+    for i, batch in enumerate(batches):
+        eid = batch[0][0]
+        print(i, eid)
+        plot_goose_1(model, [batch], eid)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', type=str)
     args = parser.parse_args()
     fs = {
-        'ghorbani': run_attack,
+        'baselines': run_attack_baselines,
+        'tuner': run_attack_tuner,
         'l1l2': plot_l1_l2,
         'attacks': plot_explainer_attacker,
         'histogram': plot_histogram_l1,
         'goose': plot_goose,
+        'cherry': plot_cherry_pick,
     }
     fs[args.task]()

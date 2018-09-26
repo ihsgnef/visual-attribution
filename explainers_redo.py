@@ -1,5 +1,5 @@
 import numpy as np
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import torch
 import torch.nn as nn
@@ -189,8 +189,6 @@ class RobustSparseExplainer(SparseExplainer):
                  lambda_l1=1e4,
                  lambda_l2=1e5,
                  n_iter=10,
-                 # optim='sgd',
-                 # lr=0.1,
                  optim='adam',
                  lr=1e-4,
                  init='zero',
@@ -200,6 +198,19 @@ class RobustSparseExplainer(SparseExplainer):
                                                     lambda_l1, lambda_l2,
                                                     n_iter, optim, lr, init,
                                                     times_input)
+
+    def loss(self, taylor_1, taylor_2, l1_term, l2_term):
+        batch_size = l1_term.shape[0]
+        taylor_2 = (self.lambda_t2 * taylor_2).sum() / batch_size
+        l1_term = (self.lambda_l1 * l1_term).sum() / batch_size
+        l2_term = (self.lambda_l2 * l2_term).sum() / batch_size
+        loss = (
+            - self.lambda_t1 * taylor_1
+            + taylor_2
+            + l1_term
+            + l2_term
+        )
+        return loss
 
     def explain(self, model, x):
         self.history = defaultdict(list)
@@ -231,11 +242,27 @@ class RobustSparseExplainer(SparseExplainer):
             hessian_delta_vp, = torch.autograd.grad(
                 x_grad.dot(g).sum(), x, create_graph=True)
             hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
-            taylor_2 = (delta - g / 2).dot(hessian_delta_vp)
-            taylor_2 = F.l1_loss(taylor_2, torch.zeros_like(taylor_2))
+
             taylor_1 = x_grad.dot(delta).sum()
-            l1_term = F.l1_loss(delta, torch.zeros_like(delta))
-            l2_term = F.mse_loss(delta, torch.zeros_like(delta))
+            # taylor_2 = (delta - g / 2).dot(hessian_delta_vp)
+            taylor_2 = (delta - g / 2) * hessian_delta_vp
+            taylor_2 = F.l1_loss(taylor_2, torch.zeros_like(taylor_2),
+                                 reduce=False)
+            taylor_2 = taylor_2.sum(2).sum(1) / (n_chs * height * width)
+
+            l1_term = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
+            l2_term = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
+            l1_term = l1_term.sum(2).sum(1) / (n_chs * height * width)
+            l2_term = l2_term.sum(2).sum(1) / (n_chs * height * width)
+
+            # loss = (
+            #     - self.lambda_t1 * taylor_1
+            #     + self.lambda_t2 * taylor_2
+            #     + self.lambda_l1 * l1_term
+            #     + self.lambda_l2 * l2_term
+            # )
+
+            loss = self.loss(taylor_1, taylor_2, l1_term, l2_term)
 
             # log optimization
             vmax = delta.abs().sum(1).max(1)[0]
@@ -246,13 +273,6 @@ class RobustSparseExplainer(SparseExplainer):
             self.history['hessian'].append(taylor_2.data.cpu().numpy())
             self.history['vmax'].append(vmax.data.cpu().numpy())
             self.history['vmin'].append(vmin.data.cpu().numpy())
-
-            loss = (
-                - self.lambda_t1 * taylor_1
-                + self.lambda_t2 * taylor_2
-                + self.lambda_l1 * l1_term
-                + self.lambda_l2 * l2_term
-            )
 
             optimizer.zero_grad()
             loss.backward()
@@ -427,86 +447,70 @@ class SmoothGradExplainer:
 
 class BatchTuner:
 
-    def __init__(self,
-                 lambda_t1=1,
-                 lambda_t2=1,
-                 n_iter=10,
-                 optim='adam',
-                 lr=1e-4,
-                 init='zero',
+    def __init__(self, Exp, tunables, n_steps=16, n_search=3,
+                 n_iter=10, optim='adam', lr=1e-4, init='zero',
                  times_input=False,
                  ):
         self.sparse_args = {
-            'lambda_t1': lambda_t1,
-            'lambda_t2': lambda_t2,
             'n_iter': n_iter,
             'optim': optim,
             'lr': lr,
             'init': init,
             'times_input': times_input,
         }
+        self.Exp = Exp
+        self.tunables = tunables
+        self.n_steps = n_steps
+        self.n_search = n_search
 
     def explain_one(self, model, x):
-        l1_lo, l1_hi = 0.01, 2e5
-        l2_lo, l2_hi = 1e2, 1e8
-        n_steps = 16
-        n_iter = 3
-
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
+
+        best_lambdas = {key: lo for key, (lo, hi) in self.tunables.items()}
+        best_median = 0
+        best_saliency = 0
+
         # creat batch
-        x_l1 = x.repeat(n_steps, 1, 1, 1)
-        x_l2 = x.repeat(n_steps, 1, 1, 1)
+        xx = x.repeat(self.n_steps, 1, 1, 1)
+        for i in range(self.n_search):
+            for param, (lo, hi) in self.tunables.items():
+                if lo == hi:
+                    continue
+                ps = np.geomspace(lo, hi, self.n_steps)
+                args = self.sparse_args.copy()
+                args.update(best_lambdas)
+                args[param] = Variable(torch.FloatTensor(ps).cuda())
 
-        for i in range(n_iter):
-            l1s = np.geomspace(l1_lo, l1_hi, n_steps)
-            l2s = np.geomspace(l2_lo, l2_hi, n_steps)
-            # print(l1s, l2s)
-
-            l1 = Variable(torch.FloatTensor(l1s).cuda())
-            saliency = SparseExplainer(
-                lambda_l1=l1, lambda_l2=l2s[0],
-                **self.sparse_args).explain(model, x_l1)
-
-            s1 = saliency.cpu().numpy()
-            s1 = viz.agg_clip(s1)
-            medians = [viz.get_median_difference(x) for x in s1]
-            l1_best_id = np.argmax(medians)
-            l1_best = l1s[l1_best_id]
-            l1_lo = l1s[max(l1_best_id - 1, 0)]
-            l1_hi = l1s[min(l1_best_id + 1, len(l1s) - 1)]
-
-            if medians[l1_best_id] > 0.945:
-                saliency = saliency[l1_best_id].unsqueeze(0)
-                return saliency, l1_best, l2s[0]
-
-            l2 = Variable(torch.FloatTensor(l2s).cuda())
-            saliency = SparseExplainer(
-                lambda_l1=l1_best, lambda_l2=l2,
-                **self.sparse_args).explain(model, x_l2)
-            s2 = saliency.cpu().numpy()
-            s2 = viz.agg_clip(s2)
-            medians = [viz.get_median_difference(x) for x in s2]
-            l2_best_id = np.argmax(medians)
-            l2_best = l2s[l2_best_id]
-            l2_lo = l2s[max(l2_best_id - 1, 0)]
-            l2_hi = l2s[min(l2_best_id + 1, len(l2s) - 1)]
-
-            print('{}: {}-{}, {}-{}'.format(i, l1_lo, l1_hi, l2_lo, l2_hi))
-            saliency = saliency[l2_best_id].unsqueeze(0)
-        return saliency, l1_best, l2_best
+                zero_grad(model)
+                saliency = self.Exp(**args).explain(model, xx)
+                s = viz.agg_clip(saliency.cpu().numpy())
+                medians = [viz.get_median_difference(x) for x in s]
+                best_idx = np.argmax(medians)
+                best_lambdas[param] = ps[best_idx]
+                lo = ps[max(best_idx - 1, 0)]
+                hi = ps[min(best_idx + 1, len(ps) - 1)]
+                self.tunables[param] = (lo, hi)
+                if medians[best_idx] > best_median:
+                    best_median = medians[best_idx]
+                    best_saliency = saliency[best_idx].unsqueeze(0).clone()
+                if best_median > 0.945:
+                    return best_saliency, best_lambdas 
+            output = '{}: {:.3f}'.format(i, best_median)
+            for param, (lo, hi) in self.tunables.items():
+                output += ' {}: {:.3f} ~ {:.3f}'.format(param, lo, hi)
+            print(output)
+        return best_saliency, best_lambdas
 
     def explain(self, model, xs, get_lambdas=False):
         batch_size, n_chs, height, width = xs.shape
-        saliency, l1_best, l2_best = [], [], []
+        saliency, lambdas = [], []
         for x in xs:
-            s, l1, l2 = self.explain_one(model, x)
+            s, ls = self.explain_one(model, x)
             saliency.append(s)
-            l1_best.append(l1)
-            l2_best.append(l2)
+            lambdas.append(ls)
         saliency = torch.cat(saliency, dim=0)
-
         if get_lambdas:
-            return saliency, l1_best, l2_best
+            return saliency, lambdas
         else:
             return saliency
