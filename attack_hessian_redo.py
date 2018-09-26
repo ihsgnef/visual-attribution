@@ -18,7 +18,7 @@ import utils
 from explainers_redo import zero_grad
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer, BatchTuner
+    LambdaTunerExplainer, BatchTuner, SmoothCASO
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -277,7 +277,7 @@ def attack_batch(model, batch, explainers, attackers,
             perturbed = attacker.attack(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
             saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
-
+            print(atk_name, mth_name, saliency_1.shape, saliency_2.shape)
             scores = saliency_overlap(saliency_1, saliency_2)
 
             for i in range(batch_size):
@@ -562,7 +562,7 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
     return results, all_ids, all_images, all_labels
 
 
-def plot_explainer_attacker(n_examples=1, agg_func=viz.agg_clip):
+def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
     model, batches = setup_imagenet(batch_size=16, n_examples=n_examples,
                                     arch='softplus50')
 
@@ -573,30 +573,19 @@ def plot_explainer_attacker(n_examples=1, agg_func=viz.agg_clip):
     ]
 
     explainers = [
-        (
-            'CASO-T',
-            BatchTuner(
-                SparseExplainer,
-                tunables=OrderedDict({
-                    'lambda_t2': (1, 1),
-                    'lambda_l1': (1e-2, 2e5),
-                    'lambda_l2': (1, 1e6),
-                }),
-                n_steps=10,
-            )
-        ),
-        (
-            'CASO-R',
-            BatchTuner(
-                RobustSparseExplainer,
-                tunables=OrderedDict({
-                    'lambda_t2': (1e-2, 1e3),
-                    'lambda_l1': (0, 0),
-                    'lambda_l2': (1, 1e6),
-                }),
-                n_steps=16,
-            )
-        ),
+        ('SmoothCASO', SmoothCASO(BatchTuner(SparseExplainer, n_steps=12))),
+        # ('CASO-T', BatchTuner(SparseExplainer,
+        #                       tunables=OrderedDict({
+        #                           'lambda_t2': (1, 1),
+        #                           'lambda_l1': (1e-2, 2e5),
+        #                           'lambda_l2': (1, 1e6)}),
+        #                       n_steps=10)),
+        # ('CASO-R', BatchTuner(RobustSparseExplainer,
+        #                       tunables=OrderedDict({
+        #                           'lambda_t2': (1e3, 1e5),
+        #                           'lambda_l1': (0, 0),
+        #                           'lambda_l2': (1, 1e6)}), 
+        #                       n_steps=10)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),

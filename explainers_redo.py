@@ -109,11 +109,12 @@ class SparseExplainer(VanillaGradExplainer):
 
     def loss(self, taylor_1, taylor_2, l1_term, l2_term):
         batch_size = l1_term.shape[0]
+        taylor_2 = (self.lambda_t2 * taylor_2).sum() / batch_size
         l1_term = (self.lambda_l1 * l1_term).sum() / batch_size
         l2_term = (self.lambda_l2 * l2_term).sum() / batch_size
         loss = (
             - self.lambda_t1 * taylor_1
-            - self.lambda_t2 * taylor_2
+            - taylor_2
             + l1_term
             + l2_term
         )
@@ -142,7 +143,9 @@ class SparseExplainer(VanillaGradExplainer):
                 x_grad.dot(delta).sum(), x, create_graph=True)
             hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
             taylor_1 = x_grad.dot(delta).sum()
-            taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
+            taylor_2 = 0.5 * (delta * hessian_delta_vp)
+            taylor_2 = taylor_2.sum(2).sum(1) / (n_chs * height * width)
+            # taylor_2 = 0.5 * delta.dot(hessian_delta_vp).sum()
             # l1_term = F.l1_loss(delta, torch.zeros_like(delta))
             # l2_term = F.mse_loss(delta, torch.zeros_like(delta))
             l1_term = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
@@ -418,6 +421,7 @@ class IntegrateGradExplainer(VanillaGradExplainer):
 
 
 class SmoothGradExplainer:
+
     def __init__(self, base_explainer=None, stdev_spread=0.15,
                  nsamples=25, magnitude=True, times_input=False):
         if base_explainer is None:
@@ -445,12 +449,27 @@ class SmoothGradExplainer:
         return total_gradients
 
 
+class SmoothCASO:
+
+    def __init__(self, tuner, Exp=SparseExplainer):
+        self.tuner = tuner
+        self.Exp = Exp
+
+    def explain(self, model, x):
+        saliency, lambdas = self.tuner.explain(model, x, get_lambdas=True)
+        lambda_vectors = {k: [] for k in lambdas[0].keys()}
+        for key in lambda_vectors:
+            ls = [l[key] for l in lambdas]
+            lambda_vectors[key] = Variable(torch.FloatTensor(ls).cuda())
+        exp = SmoothGradExplainer(self.Exp(**lambda_vectors))
+        return exp.explain(model, x)
+
+
 class BatchTuner:
 
-    def __init__(self, Exp, tunables, n_steps=16, n_search=3,
+    def __init__(self, Exp, tunables=None, n_steps=16, n_search=3,
                  n_iter=10, optim='adam', lr=1e-4, init='zero',
-                 times_input=False,
-                 ):
+                 times_input=False):
         self.sparse_args = {
             'n_iter': n_iter,
             'optim': optim,
@@ -459,6 +478,12 @@ class BatchTuner:
             'times_input': times_input,
         }
         self.Exp = Exp
+        if tunables is None:
+            tunables = OrderedDict({
+                'lambda_t2': (1, 1),
+                'lambda_l1': (1e-2, 2e5),
+                'lambda_l2': (1, 1e6),
+            })
         self.tunables = tunables
         self.n_steps = n_steps
         self.n_search = n_search
@@ -466,14 +491,12 @@ class BatchTuner:
     def explain_one(self, model, x):
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
-
         best_lambdas = {key: lo for key, (lo, hi) in self.tunables.items()}
         best_median = 0
         best_saliency = 0
-
         # creat batch
-        xx = x.repeat(self.n_steps, 1, 1, 1)
         for i in range(self.n_search):
+            xx = x.repeat(self.n_steps, 1, 1, 1)
             for param, (lo, hi) in self.tunables.items():
                 if lo == hi:
                     continue
@@ -481,10 +504,9 @@ class BatchTuner:
                 args = self.sparse_args.copy()
                 args.update(best_lambdas)
                 args[param] = Variable(torch.FloatTensor(ps).cuda())
-
                 zero_grad(model)
-                saliency = self.Exp(**args).explain(model, xx)
-                s = viz.agg_clip(saliency.cpu().numpy())
+                saliency = self.Exp(**args).explain(model, xx).cpu().numpy()
+                s = viz.agg_clip(saliency)
                 medians = [viz.get_median_difference(x) for x in s]
                 best_idx = np.argmax(medians)
                 best_lambdas[param] = ps[best_idx]
@@ -493,9 +515,9 @@ class BatchTuner:
                 self.tunables[param] = (lo, hi)
                 if medians[best_idx] > best_median:
                     best_median = medians[best_idx]
-                    best_saliency = saliency[best_idx].unsqueeze(0).clone()
+                    best_saliency = saliency[best_idx]
                 if best_median > 0.945:
-                    return best_saliency, best_lambdas 
+                    return best_saliency, best_lambdas
             output = '{}: {:.3f}'.format(i, best_median)
             for param, (lo, hi) in self.tunables.items():
                 output += ' {}: {:.3f} ~ {:.3f}'.format(param, lo, hi)
@@ -509,7 +531,7 @@ class BatchTuner:
             s, ls = self.explain_one(model, x)
             saliency.append(s)
             lambdas.append(ls)
-        saliency = torch.cat(saliency, dim=0)
+        saliency = torch.FloatTensor(np.stack(saliency)).cuda()
         if get_lambdas:
             return saliency, lambdas
         else:
