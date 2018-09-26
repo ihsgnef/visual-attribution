@@ -277,7 +277,7 @@ def attack_batch(model, batch, explainers, attackers,
             perturbed = attacker.attack(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
             saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
-            print(atk_name, mth_name, saliency_1.shape, saliency_2.shape)
+            # print(atk_name, mth_name, saliency_1.shape, saliency_2.shape)
             scores = saliency_overlap(saliency_1, saliency_2)
 
             for i in range(batch_size):
@@ -568,18 +568,18 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
-        ('Ghorbani', GhorbaniAttack()),
+        # ('Ghorbani', GhorbaniAttack()),
         ('Random', ScaledNoiseAttack()),
     ]
 
     explainers = [
-        ('SmoothCASO', SmoothCASO(BatchTuner(SparseExplainer, n_steps=12))),
-        # ('CASO-T', BatchTuner(SparseExplainer,
-        #                       tunables=OrderedDict({
-        #                           'lambda_t2': (1, 1),
-        #                           'lambda_l1': (1e-2, 2e5),
-        #                           'lambda_l2': (1, 1e6)}),
-        #                       n_steps=10)),
+        ('SmoothCASO', SmoothCASO(n_steps=12)),
+        ('CASO', BatchTuner(SparseExplainer,
+                            tunables=OrderedDict({
+                                'lambda_t2': (1, 1),
+                                'lambda_l1': (1e-2, 2e5),
+                                'lambda_l2': (1, 1e6)}),
+                            n_steps=10)),
         # ('CASO-R', BatchTuner(RobustSparseExplainer,
         #                       tunables=OrderedDict({
         #                           'lambda_t2': (1e3, 1e5),

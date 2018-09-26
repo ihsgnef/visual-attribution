@@ -451,17 +451,17 @@ class SmoothGradExplainer:
 
 class SmoothCASO:
 
-    def __init__(self, tuner, Exp=SparseExplainer):
-        self.tuner = tuner
-        self.Exp = Exp
+    def __init__(self, n_steps=16):
+        self.n_steps = n_steps
 
     def explain(self, model, x):
-        saliency, lambdas = self.tuner.explain(model, x, get_lambdas=True)
+        tuner = BatchTuner(SparseExplainer, n_steps=self.n_steps)
+        saliency, lambdas = tuner.explain(model, x, get_lambdas=True)
         lambda_vectors = {k: [] for k in lambdas[0].keys()}
         for key in lambda_vectors:
             ls = [l[key] for l in lambdas]
             lambda_vectors[key] = Variable(torch.FloatTensor(ls).cuda())
-        exp = SmoothGradExplainer(self.Exp(**lambda_vectors))
+        exp = SmoothGradExplainer(SparseExplainer(**lambda_vectors))
         return exp.explain(model, x)
 
 
@@ -491,13 +491,14 @@ class BatchTuner:
     def explain_one(self, model, x):
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
-        best_lambdas = {key: lo for key, (lo, hi) in self.tunables.items()}
+        tunables = self.tunables.copy()
+        best_lambdas = {key: lo for key, (lo, hi) in tunables.items()}
         best_median = 0
         best_saliency = 0
         # creat batch
         for i in range(self.n_search):
             xx = x.repeat(self.n_steps, 1, 1, 1)
-            for param, (lo, hi) in self.tunables.items():
+            for param, (lo, hi) in tunables.items():
                 if lo == hi:
                     continue
                 ps = np.geomspace(lo, hi, self.n_steps)
@@ -512,14 +513,14 @@ class BatchTuner:
                 best_lambdas[param] = ps[best_idx]
                 lo = ps[max(best_idx - 1, 0)]
                 hi = ps[min(best_idx + 1, len(ps) - 1)]
-                self.tunables[param] = (lo, hi)
+                tunables[param] = (lo, hi)
                 if medians[best_idx] > best_median:
                     best_median = medians[best_idx]
                     best_saliency = saliency[best_idx]
                 if best_median > 0.945:
                     return best_saliency, best_lambdas
             output = '{}: {:.3f}'.format(i, best_median)
-            for param, (lo, hi) in self.tunables.items():
+            for param, (lo, hi) in tunables.items():
                 output += ' {}: {:.3f} ~ {:.3f}'.format(param, lo, hi)
             print(output)
         return best_saliency, best_lambdas
