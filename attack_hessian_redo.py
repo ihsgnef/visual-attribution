@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from scipy.stats import spearmanr
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 import torch
 import torch.nn.functional as F
@@ -299,8 +299,9 @@ def attack_batch(model, batch, explainers, attackers,
 
 def setup_imagenet(batch_size=16, example_ids=None,
                    n_batches=-1, n_examples=-1,
-                   shuffle=True, dump_name=None):
-    model = utils.load_model('resnet50')
+                   shuffle=True, dump_name=None,
+                   arch='softplus50'):
+    model = utils.load_model(arch)
     model.eval()
     model.cuda()
     print('model loaded')
@@ -561,8 +562,9 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
     return results, all_ids, all_images, all_labels
 
 
-def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
-    model, batches = setup_imagenet(n_examples=n_examples)
+def plot_explainer_attacker(n_examples=1, agg_func=viz.agg_clip):
+    model, batches = setup_imagenet(batch_size=16, n_examples=n_examples,
+                                    arch='softplus50')
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
@@ -571,12 +573,33 @@ def plot_explainer_attacker(n_examples=6, agg_func=viz.agg_clip):
     ]
 
     explainers = [
-        # ('CASO', SparseExplainer()),
-        # ('CASO-T', BatchTuner(SparseExplainer)),
-        ('CASO-R', BatchTuner(RobustSparseExplainer, l1_lo=0, l1_hi=0)),
+        (
+            'CASO-T',
+            BatchTuner(
+                SparseExplainer,
+                tunables=OrderedDict({
+                    'lambda_t2': (1, 1),
+                    'lambda_l1': (1e-2, 2e5),
+                    'lambda_l2': (1, 1e6),
+                }),
+                n_steps=10,
+            )
+        ),
+        (
+            'CASO-R',
+            BatchTuner(
+                RobustSparseExplainer,
+                tunables=OrderedDict({
+                    'lambda_t2': (1e-2, 1e3),
+                    'lambda_l1': (0, 0),
+                    'lambda_l2': (1, 1e6),
+                }),
+                n_steps=16,
+            )
+        ),
         ('Gradient', VanillaGradExplainer()),
-        # ('SmoothGrad', SmoothGradExplainer()),
-        # ('IntegratedGrad', IntegrateGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),
+        ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
     results, ids, images, labels = get_attack_saliency_maps(
@@ -764,6 +787,7 @@ def plot_goose_1(model, batches, goose_id):
         matrix.append(col)
     matrix = list(map(list, zip(*matrix)))
     plot_matrix(matrix, 'figures/goose_1_{}.pdf'.format(goose_id))
+    print('done', goose_id)
 
 
 def plot_goose_2_full(model, batches, goose_id):
@@ -854,12 +878,13 @@ def plot_goose():
 def plot_cherry_pick():
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
-    example_ids = example_ids[:20]
-    model, batches = setup_imagenet(example_ids=example_ids)
+    example_ids = example_ids[20:100]
+    model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)
     batches = list(batches)
-    for i, eid in enumerate(example_ids):
+    for i, batch in enumerate(batches):
+        eid = batch[0][0]
         print(i, eid)
-        plot_goose_1(model, batches, eid)
+        plot_goose_1(model, [batch], eid)
 
 
 if __name__ == '__main__':
