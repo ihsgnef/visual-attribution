@@ -721,9 +721,9 @@ def plot_goose_1(model, batches, goose_id):
         # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
         # ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
         # ('CASO-1', BatchTuner(SparseExplainer, lambda_t2=0, n_steps=12)),
-        ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
-        ('Gradient', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
+        # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
+        # ('Gradient', VanillaGradExplainer()),
+        # ('SmoothGrad', SmoothGradExplainer()),
         ('CASO-E', Eigenvalue()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
         # ('Eigen', Eigenvalue()),
@@ -867,8 +867,8 @@ def plot_cherry_pick():
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
     example_ids = example_ids[20:100]
-    # goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    # example_ids = [goose_id]
+    goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    example_ids = [goose_id]
     model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)
     batches = list(batches)
     for i, batch in enumerate(batches):

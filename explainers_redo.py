@@ -67,7 +67,6 @@ class VATExplainer:
         :param n_iterations: number of iterations (default: 1)
         """
         self.xi = xi
-        self.n_iterations = n_iterations
         self.times_input = times_input
 
     def explain(self, model, x, KL=True):
@@ -97,29 +96,25 @@ class Eigenvalue(VanillaGradExplainer):
 
     def explain(self, model, x):
         batch_size, n_chs, height, width = x.shape
-        # eigenvector with the largest eigen value, normalized
-        VATExplainer().explain(model, x, KL=True)
+        x_data = x.clone()
         x = Variable(x, requires_grad=True)
-        model.zero_grad()
-        u = VATExplainer().explain(model, x.data, KL=False)
-        u = u.view(batch_size, n_chs, -1)
-        u = Variable(u)
-        output = model(x)
-        y = output.max(1)[1]
-        x_grad = self.get_input_grad(x, output, y, create_graph=True)
-        x_grad = x_grad.view((batch_size, n_chs, -1))
-        hessian_delta_vp, = torch.autograd.grad(
-            x_grad.dot(u).sum(), x, create_graph=True)
-        hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
-        taylor_2 = (u * hessian_delta_vp)
-        taylor_2 = taylor_2.sum(2).sum(1) / (n_chs * height * width)
-        print(taylor_2.data[0])
-        lambda_l2 = (taylor_2 / 2).data
-        lambda_l2 = Variable(lambda_l2)
+        d = torch.rand(batch_size, n_chs, height * width)
+        d = _l2_normalize(d.sub(0.5)).cuda()
 
-        model.zero_grad()
-        exp = BatchTuner(SparseExplainer, lambda_l2=lambda_l2, n_steps=12)
-        return exp.explain(model, x.data)
+        for _ in range(1):
+            model.zero_grad()
+            output = model(x)
+            y = output.max(1)[1]
+            loss = F.cross_entropy(output, y)
+            x_grad, = torch.autograd.grad(loss, x, create_graph=True)
+            x_grad = x_grad.view(batch_size, n_chs, -1)
+            d = Variable(d, requires_grad=True)
+            hvp, = torch.autograd.grad(x_grad.dot(d).sum(), x)
+            hvp = hvp.data.view(batch_size, n_chs, -1)
+            taylor_2 = (d * hvp).sum()
+            d = _l2_normalize(hvp).view(batch_size, n_chs, -1)
+            print(taylor_2)
+        return VanillaGradExplainer().explain(model, x_data)
 
 
 class SparseExplainer(VanillaGradExplainer):
