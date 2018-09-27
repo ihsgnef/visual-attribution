@@ -63,6 +63,7 @@ class Explainer:
             torch.cuda.FloatTensor:
                 Saliency mapping with the same shape as input x.
         '''
+        # TODO add optional y
         pass
 
 
@@ -130,7 +131,7 @@ class VATExplainer:
         return d
 
 
-class Eigenvalue(VanillaGradExplainer):
+class Eigenvalue(Explainer):
 
     def explain(self, model, x):
         batch_size, n_chs, height, width = x.shape
@@ -155,7 +156,7 @@ class Eigenvalue(VanillaGradExplainer):
         return VanillaGradExplainer().explain(model, x_data)
 
 
-class CASO(VanillaGradExplainer):
+class CASO(Explainer):
 
     def __init__(self,
                  lambda_t1=1,
@@ -361,7 +362,7 @@ class RobustCASO(CASO):
         return delta
 
 
-class IntegrateGradExplainer(VanillaGradExplainer):
+class IntegrateGradExplainer(Explainer):
     '''Integrated gradient. The final input multiplication is optional.
 
     See https://arxiv.org/abs/1703.01365.

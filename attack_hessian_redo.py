@@ -9,7 +9,6 @@ from scipy.stats import spearmanr
 from collections import defaultdict
 
 import torch
-import torch.nn.functional as F
 from torch.autograd import Variable
 import torchvision.transforms as transforms
 
@@ -18,6 +17,7 @@ import utils
 from explainers import CASO, RobustCASO, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
     LambdaTunerExplainer, BatchTuner, SmoothCASO, Eigenvalue
+from attackers import EmptyAttack, GhorbaniAttack, ScaledNoiseAttack
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -34,199 +34,6 @@ transf = transforms.Compose([
 #         transforms.Normalize(mean=[0.485, 0.456, 0.406],
 #                              std=[0.229, 0.224, 0.225])
 #     ])
-
-
-def get_topk_mask(saliency, k=1e4, topk_agg=None, flip=False):
-    '''Generate binary mask based on saliency value.
-    Saliency is first aggregated via `topk_agg`, and the mask has the same
-    shape as the aggregated saliency (3D or 4D).
-    If `flip` is False, high saliency value corresponds to 1, otherwise 0.
-    :param saliency: 4D numpy.array
-    :param k: number of pixels to attack, channel independent if mask is 4D
-    :param topk_agg: should probably move to whoever calls me
-    :param flip: if flip, high value is 0 instead of 1
-    '''
-    assert len(saliency.shape) == 4
-    batch_size, n_chs, height, width = saliency.shape
-    if topk_agg is not None:
-        saliency = topk_agg(saliency)
-
-    if len(saliency.shape) == 4:
-        saliency = saliency.reshape(batch_size, n_chs, -1)
-        topk_mask = np.ones_like(saliency) if flip else np.zeros_like(saliency)
-        topk_idx = np.argsort(-saliency, axis=2)[:, :, :k]
-        for i in range(batch_size):
-            for j in range(n_chs):
-                topk_mask[i, j, topk_idx[i, j]] = 0 if flip else 1
-        topk_mask = topk_mask.reshape(batch_size, n_chs, height, width)
-    elif len(saliency.shape) == 3:
-        saliency = saliency.reshape(batch_size, -1)
-        topk_mask = np.ones_like(saliency) if flip else np.zeros_like(saliency)
-        topk_idx = np.argsort(-saliency, axis=1)[:, :k]
-        for i in range(batch_size):
-            topk_mask[i, topk_idx[i]] = 0 if flip else 1
-        topk_mask = topk_mask.reshape(batch_size, height, width)
-        topk_mask = np.expand_dims(topk_mask, axis=1)
-        topk_mask = np.tile(topk_mask, (1, n_chs, 1, 1))
-    else:
-        print('saliency shape wrong')
-    return topk_mask
-
-
-class EmptyAttack:
-
-    def attack(self, model, x, saliency=None):
-        return x
-
-
-class GhorbaniAttack:
-
-    def __init__(self,
-                 lambda_t1=0,
-                 lambda_t2=1,
-                 lambda_l1=0,
-                 lambda_l2=0,
-                 n_iter=20,
-                 optim='sgd',
-                 lr=1e-2,
-                 epsilon=2/255,
-                 k=1e4,
-                 topk_agg=lambda x: np.abs(x)
-                 ):
-        '''
-        :param lambda_t1
-        :param lambda_t2
-        :param lambda_l1
-        :param lambda_l2
-        :param n_iter
-        :param optim
-        :param lr
-        :param epsilon
-        :param k: number of pixels to dampen
-        :param topk_agg: aggregation for selecting top-k pixels
-        '''
-        self.lambda_t1 = lambda_t1
-        self.lambda_t2 = lambda_t2
-        self.lambda_l1 = lambda_l1
-        self.lambda_l2 = lambda_l2
-        self.n_iter = n_iter
-        self.optim = optim.lower()
-        self.lr = lr
-        self.epsilon = epsilon
-        self.k = int(k)
-        self.topk_agg = topk_agg
-
-    def get_input_grad(self, x, output, y, create_graph=False):
-        '''two methods for getting input gradient'''
-        loss = F.cross_entropy(output, y)
-        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
-
-        # grad_out = torch.zeros_like(output.data)
-        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
-        # x_grad, = torch.autograd.grad(output, x,
-        #                               grad_outputs=grad_out,
-        #                               create_graph=create_graph)
-
-        return x_grad
-
-    def attack(self, model, x, saliency=None):
-        '''Generate attack against specified saliency mapping.
-        If saliency is not specified, assume vanila gradient saliency.
-        '''
-        batch_size, n_chs, height, width = x.shape
-
-        x_prev = x.clone()
-        delta = torch.zeros_like(x)
-        y_org = model(Variable(x)).max(1)[1].data
-
-        if saliency is None:
-            x_curr = Variable(x, requires_grad=True)
-            output = model(x_curr)
-            y = output.max(1)[1]
-            saliency = self.get_input_grad(x_curr, output, y)
-            saliency = saliency.data.cpu().numpy()
-
-        topk_mask = get_topk_mask(saliency, self.k, topk_agg=self.topk_agg)
-        topk_mask = torch.FloatTensor(topk_mask).cuda()
-        topk_mask = Variable(topk_mask)
-
-        step_size = self.epsilon / self.n_iter
-        stopped = [False for _ in range(batch_size)]
-        for i in range(self.n_iter):
-            model.zero_grad()
-            x_curr = Variable(x, requires_grad=True)
-            output = model(x_curr)
-            y = output.max(1)[1]
-
-            x_grad = self.get_input_grad(x_curr, output, y, create_graph=True)
-
-            topk = (x_grad.abs() * topk_mask).sum()
-            delta, = torch.autograd.grad(-topk, x_curr)
-            delta = delta.sign().data
-
-            # verify same prediction
-            for idx in range(batch_size):
-                if stopped[idx] or y.data[idx] != y_org[idx]:
-                    x[idx] = x_prev[idx]
-                    delta[idx].zero_()
-                    stopped[idx] = True
-
-            if all(stopped):
-                break
-
-            x_prev = x.clone()
-            x = torch.clamp(x + step_size * delta, 0, 1)
-
-        # final check that all predictions remain
-        y = model(Variable(x)).max(1)[1].data
-        assert (y == y_org).all()
-        return x
-
-
-class ScaledNoiseAttack:
-
-    def __init__(self, epsilon=2 / 255):
-        self.epsilon = epsilon
-
-    def attack(self, model, x, saliency=None):
-        x = x.cpu().numpy()
-        noise = 2 * np.random.randint(2, size=x.shape) - 1
-        noise = np.sign(noise) * self.epsilon
-        x = np.clip(x + noise * x, 0, 1)
-        x = torch.FloatTensor(x).cuda()
-        return x
-
-
-class FGSM:
-
-    def __init__(self, epsilon=2 / 255, n_iter=10):
-        self.epsilon = epsilon
-        self.n_iter = n_iter
-
-    def get_input_grad(self, x, output, y, create_graph=False):
-        '''two methods for getting input gradient'''
-        loss = F.cross_entropy(output, y)
-        x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
-
-        # grad_out = torch.zeros_like(output.data)
-        # grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
-        # x_grad, = torch.autograd.grad(output, x,
-        #                               grad_outputs=grad_out,
-        #                               create_graph=create_graph)
-        return x_grad
-
-    def attack(self, model, x, saliency=None):
-        batch_size, n_chs, height, width = x.shape
-        step_size = self.epsilon / self.n_iter
-        for i in range(self.n_iter):
-            model.zero_grad()
-            x_curr = Variable(x, requires_grad=True)
-            output = model(x_curr)
-            y = output.max(1)[1]
-            x_grad = self.get_input_grad(x, output, y).data
-            x_grad = x_grad.sign()
-            x = torch.clamp(x + step_size * x_grad, 0, 1)
-        return x
 
 
 def saliency_correlation(s1, s2):
