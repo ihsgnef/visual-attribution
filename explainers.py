@@ -239,15 +239,16 @@ class CASO(VanillaGradExplainer):
             hvp, = torch.autograd.grad(x_grad.dot(delta).sum(), x,
                                        create_graph=True)
             hvp = hvp.view((batch_size, n_chs, -1))
-            t1 = x_grad * delta
+            t1 = x_grad.dot(delta).sum()
             t2 = 0.5 * (delta * hvp)
             l1 = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
             l2 = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
-            t1 = t1.sum(2).sum(1) / (n_chs * height * width)
+            # t1 = t1.sum(2).sum(1) / (n_chs * height * width)
             t2 = t2.sum(2).sum(1) / (n_chs * height * width)
             l1 = l1.sum(2).sum(1) / (n_chs * height * width)
             l2 = l2.sum(2).sum(1) / (n_chs * height * width)
-            t1 = (self.lambda_t1 * t1).sum() / batch_size
+            # t1 = (self.lambda_t1 * t1).sum() / batch_size
+            t1 = self.lambda_t1 * t1
             t2 = (self.lambda_t2 * t2).sum() / batch_size
             l1 = (self.lambda_l1 * l1).sum() / batch_size
             l2 = (self.lambda_l2 * l2).sum() / batch_size
@@ -320,17 +321,18 @@ class RobustCASO(CASO):
             hvp, = torch.autograd.grad(x_grad.dot(g).sum(), x,
                                        create_graph=True)
             hvp = hvp.view((batch_size, n_chs, -1))
-            t1 = (x_grad * delta)
+            t1 = x_grad.dot(delta).sum()
             t2 = (delta - g / 2) * hvp
             t2 = F.l1_loss(t2, torch.zeros_like(t2), reduce=False)
             l1 = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
             l2 = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
 
-            t1 = t1.sum(2).sum(1) / (n_chs * height * width)
+            # t1 = t1.sum(2).sum(1) / (n_chs * height * width)
             t2 = t2.sum(2).sum(1) / (n_chs * height * width)
             l1 = l1.sum(2).sum(1) / (n_chs * height * width)
             l2 = l2.sum(2).sum(1) / (n_chs * height * width)
-            t1 = (self.lambda_t1 * t2).sum() / batch_size
+            # t1 = (self.lambda_t1 * t1).sum() / batch_size
+            t1 = self.lambda_t1 * t1
             t2 = (self.lambda_t2 * t2).sum() / batch_size
             l1 = (self.lambda_l1 * l1).sum() / batch_size
             l2 = (self.lambda_l2 * l2).sum() / batch_size

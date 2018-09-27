@@ -718,9 +718,9 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
 
 def plot_goose_1(model, batches, goose_id):
     explainers = [
-        ('CASO', CASO(lambda_l1=100, lambda_l2=1e4)),
         ('CASO', BatchTuner(CASO, n_steps=12)),
-        ('CASO-1', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
+        ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
+        ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
         ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
