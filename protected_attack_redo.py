@@ -11,7 +11,7 @@ from torch.autograd import Variable
 import torchvision.transforms as transforms
 import torch.nn.functional as F
 import torchvision
-from explainers_redo import SparseExplainer, RobustSparseExplainer, \
+from explainers import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
     LambdaTunerExplainer, BatchTuner
 import matplotlib

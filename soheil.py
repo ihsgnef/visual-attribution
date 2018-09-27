@@ -8,8 +8,7 @@ matplotlib.use('Agg')
 from matplotlib import pyplot as plt
 from matplotlib import pylab as P
 
-from explainers_redo import zero_grad
-from explainers_redo import SparseExplainer, RobustSparseExplainer, \
+from explainers import CASO, RobustCASO, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
     LambdaTunerExplainer
 

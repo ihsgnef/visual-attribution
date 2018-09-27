@@ -15,7 +15,7 @@ import torchvision.transforms as transforms
 
 import viz
 import utils
-from explainers_redo import SparseExplainer, RobustSparseExplainer, \
+from explainers import CASO, RobustCASO, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
     LambdaTunerExplainer, BatchTuner, SmoothCASO, Eigenvalue
 
@@ -366,9 +366,9 @@ def run_attack_baselines(n_examples=4):
     ]
 
     explainers = [
-        ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
-        ('CASO-1', BatchTuner(SparseExplainer, n_steps=12, t2_lo=0, t2_hi=0)),
-        ('CASO-R', BatchTuner(RobustSparseExplainer, n_steps=12)),
+        ('CASO', BatchTuner(CASO, n_steps=12)),
+        ('CASO-1', BatchTuner(CASO, n_steps=12, t2_lo=0, t2_hi=0)),
+        ('CASO-R', BatchTuner(RobustCASO, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -573,12 +573,12 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
     ]
 
     explainers = [
-        # ('CASO-VAT', BatchTuner(SparseExplainer, n_steps=12, init='vat')),
-        # ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
-        # ('CASO-1', BatchTuner(SparseExplainer, n_steps=12, t2_lo=0, t2_hi=0)),
-        # ('CASO-2', BatchTuner(SparseExplainer, n_steps=12, lambda_t1=0)),
+        # ('CASO-VAT', BatchTuner(CASO, n_steps=12, init='vat')),
+        # ('CASO', BatchTuner(CASO, n_steps=12)),
+        # ('CASO-1', BatchTuner(CASO, n_steps=12, t2_lo=0, t2_hi=0)),
+        # ('CASO-2', BatchTuner(CASO, n_steps=12, lambda_t1=0)),
         ('SmoothCASO', SmoothCASO(n_steps=12)),
-        # ('CASO-R', BatchTuner(RobustSparseExplainer, n_steps=12)),
+        # ('CASO-R', BatchTuner(RobustCASO, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
@@ -652,7 +652,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         # use the combination as name
         for l2 in l2s:
             explainers.append(
-                ((l1, l2), SparseExplainer(lambda_t2=0,
+                ((l1, l2), CASO(lambda_t2=0,
                                            lambda_l1=l1,
                                            lambda_l2=l2)))
 
@@ -695,7 +695,7 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
     l1s = [0, 0.1, 0.5, 1, 10, 100]
     explainers = []
     for l1 in l1s:
-        explainers.append((l1, SparseExplainer(lambda_l1=l1)))
+        explainers.append((l1, CASO(lambda_l1=l1)))
     model, batches = setup_imagenet(n_examples=n_examples)
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -718,15 +718,14 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
 
 def plot_goose_1(model, batches, goose_id):
     explainers = [
-        # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
-        # ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
-        # ('CASO-1', BatchTuner(SparseExplainer, lambda_t2=0, n_steps=12)),
-        # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
-        # ('Gradient', VanillaGradExplainer()),
-        # ('SmoothGrad', SmoothGradExplainer()),
-        ('CASO-E', Eigenvalue()),
-        # ('IntegratedGrad', IntegrateGradExplainer()),
-        # ('Eigen', Eigenvalue()),
+        ('CASO', CASO(lambda_l1=100, lambda_l2=1e4)),
+        ('CASO', BatchTuner(CASO, n_steps=12)),
+        ('CASO-1', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
+        ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
+        ('Gradient', VanillaGradExplainer()),
+        ('SmoothGrad', SmoothGradExplainer()),
+        # ('CASO-E', Eigenvalue()),
+        ('IntegratedGrad', IntegrateGradExplainer()),
     ]
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -788,7 +787,7 @@ def plot_goose_2_full(model, batches, goose_id):
         # use the combination as name
         for l2 in l2s:
             explainers.append(
-                ((l1, l2), SparseExplainer(
+                ((l1, l2), CASO(
                     lambda_l1=l1, lambda_l2=l2)))
 
     results, ids, images, labels = get_saliency_maps(
@@ -826,7 +825,7 @@ def plot_goose_2(model, batches, goose_id):
 
     explainers = []
     for l1 in l1s:
-        explainers.append((l1, SparseExplainer(
+        explainers.append((l1, CASO(
             lambda_l1=l1, lambda_l2=l2)))
 
     results, ids, images, labels = get_saliency_maps(
