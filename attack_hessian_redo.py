@@ -80,7 +80,7 @@ def attack_batch(model, batch, explainers, attackers,
     for mth_name, explainer in explainers:
         saliency_1 = explainer.explain(model, batch.clone()).cpu().numpy()
         for atk_name, attacker in attackers:
-            perturbed = attacker.attack(model, batch.clone(), saliency_1)
+            perturbed = attacker.explain(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
             saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
             # print(atk_name, mth_name, saliency_1.shape, saliency_2.shape)
@@ -218,7 +218,7 @@ def run_attack_tuner(n_examples=4):
                                                  get_lambdas=True)
         saliency_1 = saliency_1.cpu().numpy()
         for atk_name, attacker in attackers:
-            perturbed = attacker.attack(model, batch.clone(), saliency_1)
+            perturbed = attacker.explain(model, batch.clone(), saliency_1)
             perturbed_np = perturbed.cpu().numpy()
             saliency_2, l12, l22 = explainer.explain(model, perturbed,
                                                      get_lambdas=True)

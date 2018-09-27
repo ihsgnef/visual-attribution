@@ -1,11 +1,8 @@
 import numpy as np
-from collections import defaultdict, OrderedDict
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-import viz
 
 
 def get_topk_mask(saliency, k=1e4, flip=False):
@@ -75,9 +72,10 @@ class Attacker:
                                           create_graph=create_graph)
         return x_grad
 
-    def attack(self, model, x, saliency=None):
-        '''Generate adversarial perturbation for input x. Some attacks target
-            specific saliency mapping.
+    def explain(self, model, x, saliency=None):
+        '''Generate adversarial perturbation for input x.
+            Attackers share the general API with Explainers, except for some 
+            attacks which target specific saliency mapping.
         Args:
             model (torch.nn.Module):
                 The model to explain.
@@ -95,7 +93,7 @@ class Attacker:
 class EmptyAttack(Attacker):
     '''Fake attack to return unperturbed input.'''
 
-    def attack(self, model, x, saliency=None):
+    def explain(self, model, x, saliency=None):
         return x
 
 
@@ -121,7 +119,7 @@ class GhorbaniAttack(Attacker):
         self.k = int(k)
         self.topk_agg = topk_agg
 
-    def attack(self, model, x, saliency=None):
+    def explain(self, model, x, saliency=None):
         '''Generate attack against specified saliency mapping.
             If saliency is not specified, assume vanila gradient saliency.
         '''
@@ -171,7 +169,7 @@ class ScaledNoiseAttack(Attacker):
     def __init__(self, epsilon=2 / 255):
         self.epsilon = epsilon
 
-    def attack(self, model, x, saliency=None):
+    def explain(self, model, x, saliency=None):
         x = x.cpu().numpy()
         noise = 2 * np.random.randint(2, size=x.shape) - 1
         noise = np.sign(noise) * self.epsilon
@@ -187,7 +185,7 @@ class FGSM(Attacker):
         self.epsilon = epsilon
         self.n_iter = n_iter
 
-    def attack(self, model, x, saliency=None):
+    def explain(self, model, x, saliency=None):
         batch_size, n_chs, height, width = x.shape
         step_size = self.epsilon / self.n_iter
         for i in range(self.n_iter):
