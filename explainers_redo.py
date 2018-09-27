@@ -24,6 +24,12 @@ def _l2_normalize(d):
     return d
 
 
+def _kl_div(log_probs, probs):
+    # pytorch KLDLoss is averaged over all dim if size_average=True
+    kld = F.kl_div(log_probs, probs, size_average=False)
+    return kld / log_probs.shape[0]
+
+
 class VanillaGradExplainer:
 
     def __init__(self, times_input=False):
@@ -51,6 +57,69 @@ class VanillaGradExplainer:
         if self.times_input:
             x_grad *= x.data
         return x_grad
+
+
+class VATExplainer:
+
+    def __init__(self, xi=1e-6, n_iterations=1, times_input=False):
+        """VAT loss
+        :param xi: hyperparameter of VAT (default: 10.0)
+        :param n_iterations: number of iterations (default: 1)
+        """
+        self.xi = xi
+        self.n_iterations = n_iterations
+        self.times_input = times_input
+
+    def explain(self, model, x, KL=True):
+        x_var = Variable(x.clone(), requires_grad=True)
+        output = model(x_var)
+        y = output.max(1)[1]
+        if KL:
+            pred = F.log_softmax(model(x_var), dim=1).detach()
+        d = torch.rand(x_var.shape).sub(0.5).cuda()
+        d = _l2_normalize(d)
+        for _ in range(self.n_iterations):
+            model.zero_grad()
+            d = Variable(self.xi * d, requires_grad=True)
+            pred_hat = model(x_var + d)
+            if KL:
+                adv_loss = _kl_div(F.log_softmax(pred_hat, dim=1), pred)
+            else:
+                adv_loss = F.cross_entropy(pred_hat, y)
+            d_grad, = torch.autograd.grad(adv_loss, d)
+            d = _l2_normalize(d_grad.data)
+        if self.times_input:
+            d *= x
+        return d
+
+
+class Eigenvalue(VanillaGradExplainer):
+
+    def explain(self, model, x):
+        batch_size, n_chs, height, width = x.shape
+        # eigenvector with the largest eigen value, normalized
+        VATExplainer().explain(model, x, KL=True)
+        x = Variable(x, requires_grad=True)
+        model.zero_grad()
+        u = VATExplainer().explain(model, x.data, KL=False)
+        u = u.view(batch_size, n_chs, -1)
+        u = Variable(u)
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y, create_graph=True)
+        x_grad = x_grad.view((batch_size, n_chs, -1))
+        hessian_delta_vp, = torch.autograd.grad(
+            x_grad.dot(u).sum(), x, create_graph=True)
+        hessian_delta_vp = hessian_delta_vp.view((batch_size, n_chs, -1))
+        taylor_2 = (u * hessian_delta_vp)
+        taylor_2 = taylor_2.sum(2).sum(1) / (n_chs * height * width)
+        print(taylor_2.data[0])
+        lambda_l2 = (taylor_2 / 2).data
+        lambda_l2 = Variable(lambda_l2)
+
+        model.zero_grad()
+        exp = BatchTuner(SparseExplainer, lambda_l2=lambda_l2, n_steps=12)
+        return exp.explain(model, x.data)
 
 
 class SparseExplainer(VanillaGradExplainer):
@@ -88,7 +157,7 @@ class SparseExplainer(VanillaGradExplainer):
         self.lr = lr
         self.init = init
         self.times_input = times_input
-        assert init in ['zero', 'random', 'grad']
+        assert init in ['zero', 'random', 'grad', 'vat']
         self.history = defaultdict(list)
 
     def initialize_delta(self, model, x):
@@ -104,6 +173,9 @@ class SparseExplainer(VanillaGradExplainer):
             delta = torch.rand((batch_size, n_chs, height * width))
             delta = delta.sub(0.5).cuda()
             delta = _l2_normalize(delta)
+        elif self.init == 'vat':
+            delta = VATExplainer().explain(model, x.data)
+            delta = delta.view(batch_size, n_chs, height * width)
         delta = nn.Parameter(delta, requires_grad=True)
         return delta
 
@@ -437,8 +509,7 @@ class SmoothGradExplainer:
         total_gradients = 0
         for i in range(self.nsamples):
             noise = torch.randn(x.shape).cuda() * stdev
-            # x_var = noise + x.clone()
-            x_var = x.clone()
+            x_var = noise + x.clone()
             grad = self.base_explainer.explain(model, x_var)
             if self.magnitude:
                 total_gradients += grad ** 2
@@ -452,18 +523,18 @@ class SmoothGradExplainer:
 
 class SmoothCASO:
 
-    def __init__(self, n_steps=16):
-        self.n_steps = n_steps
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
 
     def explain(self, model, x):
-        tuner = BatchTuner(SparseExplainer, n_steps=self.n_steps)
+        tuner = BatchTuner(SparseExplainer, **self.kwargs)
         saliency, lambdas = tuner.explain(model, x, get_lambdas=True)
         lambda_vectors = {k: [] for k in lambdas[0].keys()}
         for key in lambda_vectors:
             ls = [l[key] for l in lambdas]
             lambda_vectors[key] = Variable(torch.FloatTensor(ls).cuda())
         exp = SmoothGradExplainer(SparseExplainer(**lambda_vectors),
-                                  nsamples=1, magnitude=False)
+                                  nsamples=25, magnitude=False)
         return exp.explain(model, x)
 
 
@@ -472,8 +543,11 @@ class BatchTuner:
     def __init__(self, Exp,
                  l1_lo=1e-1, l1_hi=2e5,
                  l2_lo=1, l2_hi=1e6,
+                 t1_lo=1, t1_hi=1,
                  t2_lo=1, t2_hi=1,
                  n_steps=16, n_search=3,
+                 lambda_t1=None, lambda_t2=None,
+                 lambda_l1=None, lambda_l2=None,
                  n_iter=10, optim='adam', lr=1e-4, init='zero',
                  times_input=False):
         self.sparse_args = {
@@ -484,7 +558,20 @@ class BatchTuner:
             'times_input': times_input,
         }
         self.Exp = Exp
+        if lambda_t1 is not None:
+            t1_lo = lambda_t1
+            t1_hi = lambda_t1
+        if lambda_t2 is not None:
+            t2_lo = lambda_t2
+            t2_hi = lambda_t2
+        if lambda_l1 is not None:
+            l1_lo = lambda_l1
+            l1_hi = lambda_l1
+        if lambda_l2 is not None:
+            l2_lo = lambda_l2
+            l2_hi = lambda_l2
         self.tunables = OrderedDict({
+            'lambda_t1': (t1_lo, t1_hi),
             'lambda_t2': (t2_lo, t2_hi),
             'lambda_l1': (l1_lo, l1_hi),
             'lambda_l2': (l2_lo, l2_hi),
@@ -509,7 +596,7 @@ class BatchTuner:
                 args = self.sparse_args.copy()
                 args.update(best_lambdas)
                 args[param] = Variable(torch.FloatTensor(ps).cuda())
-                zero_grad(model)
+                model.zero_grad()
                 saliency = self.Exp(**args).explain(model, xx).cpu().numpy()
                 s = viz.agg_clip(saliency)
                 medians = [viz.get_median_difference(x) for x in s]
@@ -524,8 +611,9 @@ class BatchTuner:
                 if best_median > 0.945:
                     break
         output = '{}: {:.3f}'.format(i, best_median)
-        for param, (lo, hi) in tunables.items():
-            output += ' {}: {:.3f} ~ {:.3f}'.format(param, lo, hi)
+        for param, best in best_lambdas.items():
+            if isinstance(best, float):
+                output += ' {}: {:.3f} '.format(param, best)
         print(output)
         return best_saliency, best_lambdas
 

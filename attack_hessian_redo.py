@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from scipy.stats import spearmanr
-from collections import defaultdict, OrderedDict
+from collections import defaultdict
 
 import torch
 import torch.nn.functional as F
@@ -15,10 +15,9 @@ import torchvision.transforms as transforms
 
 import viz
 import utils
-from explainers_redo import zero_grad
 from explainers_redo import SparseExplainer, RobustSparseExplainer, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer, BatchTuner, SmoothCASO
+    LambdaTunerExplainer, BatchTuner, SmoothCASO, Eigenvalue
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -154,7 +153,7 @@ class GhorbaniAttack:
         step_size = self.epsilon / self.n_iter
         stopped = [False for _ in range(batch_size)]
         for i in range(self.n_iter):
-            zero_grad(model)
+            model.zero_grad()
             x_curr = Variable(x, requires_grad=True)
             output = model(x_curr)
             y = output.max(1)[1]
@@ -220,7 +219,7 @@ class FGSM:
         batch_size, n_chs, height, width = x.shape
         step_size = self.epsilon / self.n_iter
         for i in range(self.n_iter):
-            zero_grad(model)
+            model.zero_grad()
             x_curr = Variable(x, requires_grad=True)
             output = model(x_curr)
             y = output.max(1)[1]
@@ -357,9 +356,9 @@ def setup_imagenet(batch_size=16, example_ids=None,
 def run_attack_baselines(n_examples=4):
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
-    # example_ids = example_ids[:n_examples]
+    example_ids = example_ids[:10]
     n_examples = len(example_ids)
-    model, batches = setup_imagenet(example_ids=example_ids)
+    model, batches = setup_imagenet(batch_size=12, example_ids=example_ids)
 
     attackers = [
         ('Ghorbani', GhorbaniAttack()),
@@ -367,8 +366,9 @@ def run_attack_baselines(n_examples=4):
     ]
 
     explainers = [
-        # ('CASO', SparseExplainer()),
-        # ('Robust', RobustSparseExplainer()),
+        ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
+        ('CASO-1', BatchTuner(SparseExplainer, n_steps=12, t2_lo=0, t2_hi=0)),
+        ('CASO-R', BatchTuner(RobustSparseExplainer, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
         ('IntegratedGrad', IntegrateGradExplainer()),
@@ -383,7 +383,7 @@ def run_attack_baselines(n_examples=4):
             rows[i]['idx'] = ids[row['idx']]
         results += rows
     df = pd.DataFrame(results)
-    df.to_pickle('ghorbani_1000_baselines.pkl')
+    # df.to_pickle('ghorbani_1000_baselines.pkl')
     df.drop(['idx'], axis=1)
     print(df.groupby(['attacker', 'explainer']).mean())
 
@@ -573,12 +573,15 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
     ]
 
     explainers = [
+        # ('CASO-VAT', BatchTuner(SparseExplainer, n_steps=12, init='vat')),
+        # ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
+        # ('CASO-1', BatchTuner(SparseExplainer, n_steps=12, t2_lo=0, t2_hi=0)),
+        # ('CASO-2', BatchTuner(SparseExplainer, n_steps=12, lambda_t1=0)),
         ('SmoothCASO', SmoothCASO(n_steps=12)),
-        ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
         # ('CASO-R', BatchTuner(RobustSparseExplainer, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
 
     results, ids, images, labels = get_attack_saliency_maps(
@@ -631,11 +634,11 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         example_ids = json.load(f)
     example_id = 3
     example_ids = [example_ids[example_id]]
-    model, batches = setup_imagenet(batch_size=12, example_ids=example_ids)
+    model, batches = setup_imagenet(batch_size=10, example_ids=example_ids)
 
     attackers = [
-        # ('Original', EmptyAttack()),
-        ('Ghorbani', GhorbaniAttack()),
+        ('Original', EmptyAttack()),
+        # ('Ghorbani', GhorbaniAttack()),
     ]
 
     n_steps = 16
@@ -649,7 +652,9 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         # use the combination as name
         for l2 in l2s:
             explainers.append(
-                ((l1, l2), SparseExplainer(lambda_l1=l1, lambda_l2=l2)))
+                ((l1, l2), SparseExplainer(lambda_t2=0,
+                                           lambda_l1=l1,
+                                           lambda_l2=l2)))
 
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)
@@ -714,11 +719,14 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
 def plot_goose_1(model, batches, goose_id):
     explainers = [
         # ('CASO', SparseExplainer(lambda_l1=100, lambda_l2=1e4)),
-        ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
-        ('CASO-1', BatchTuner(SparseExplainer, t2_lo=0, t2_hi=0, n_steps=12)),
+        # ('CASO', BatchTuner(SparseExplainer, n_steps=12)),
+        # ('CASO-1', BatchTuner(SparseExplainer, lambda_t2=0, n_steps=12)),
+        ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
         ('SmoothGrad', SmoothGradExplainer()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        ('CASO-E', Eigenvalue()),
+        # ('IntegratedGrad', IntegrateGradExplainer()),
+        # ('Eigen', Eigenvalue()),
     ]
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -859,6 +867,8 @@ def plot_cherry_pick():
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
     example_ids = example_ids[20:100]
+    # goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    # example_ids = [goose_id]
     model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)
     batches = list(batches)
     for i, batch in enumerate(batches):
