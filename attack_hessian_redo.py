@@ -448,6 +448,7 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
     '''
     n_rows = len(matrix)
     n_cols = len(matrix[0])
+    plt.rc('text', usetex=True)
     f, ax = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
     for i, row in enumerate(matrix):
         for j, c in enumerate(row):
@@ -474,7 +475,7 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
         aax = ax[i, j] if len(matrix) > 1 else ax[j]
         f.patches.extend([
             patches.Rectangle(
-                (-0.01, -0.01), 1.02, 1.02, linewidth=6, 
+                (-0.01, -0.01), 1.02, 1.02, linewidth=6,
                 edgecolor='#55e400', fill=False,
                 transform=aax.transAxes)
         ])
@@ -579,7 +580,7 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
     matrix = []
     ids = sorted(ids)  # ordered by real ids
     for idx in ids:
-        label = '"{}"'.format(labels[idx])
+        label = "``{}''".format(labels[idx])
         for i, (attacker, _) in enumerate(attackers):
             cell = results[idx][(attacker, explainers[0][0])]
             # show label on top if empty attacker
@@ -638,9 +639,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         # use the combination as name
         for l2 in l2s:
             explainers.append(
-                ((l1, l2), CASO(lambda_t2=0,
-                                           lambda_l1=l1,
-                                           lambda_l2=l2)))
+                ((l1, l2), CASO(lambda_t2=0, lambda_l1=l1, lambda_l2=l2)))
 
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)
@@ -823,6 +822,53 @@ def plot_goose():
     plot_goose_2_full(model, batches, goose_id)
 
 
+def plot_single(model, batches, example_id):
+    attackers = [
+        ('Original', EmptyAttack()),
+        ('Random', ScaledNoiseAttack()),
+        ('Ghorbani', GhorbaniAttack()),
+    ]
+
+    explainers = [
+        ('CASO', BatchTuner(CASO, n_steps=12)),
+        ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
+        # ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
+        # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
+        ('Gradient', VanillaGradExplainer()),
+        # ('SmoothGrad', SmoothGradExplainer()),
+        # ('CASO-E', Eigenvalue()),
+        # ('IntegratedGrad', IntegrateGradExplainer()),
+    ]
+    results, ids, images, labels = get_attack_saliency_maps(
+        model, batches, explainers, attackers)
+    results = results[example_id]
+    # construct the matrix to be plotted
+    matrix = []
+    label = "``{}''".format(labels[example_id])
+    for i, (attacker, _) in enumerate(attackers):
+        cell = results[(attacker, explainers[0][0])]
+        row = [{
+                'image': cell['perturbed'],
+                'text_top': label if i == 0 else '',
+                'text_left': attacker,
+        }]
+        for explainer, _ in explainers:
+            cell = results[(attacker, explainer)]
+            s1 = viz.agg_clip(cell['saliency_1'])
+            s2 = viz.agg_clip(cell['saliency_2'])
+            s = s1 if i == 0 else s2
+            med_diff = viz.get_median_difference(s)
+            row.append({
+                'image': s,
+                'cmap': 'gray',
+                'text_top': explainer if i == 0 else '',
+                'text_bottom': 'r{:.3f}'.format(med_diff)
+            })
+        matrix.append(row)
+    plot_matrix(matrix, 'figures/single_{}.pdf'.format(example_id))
+    print('done', example_id)
+
+
 def plot_cherry_pick():
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
@@ -834,7 +880,7 @@ def plot_cherry_pick():
     for i, batch in enumerate(batches):
         eid = batch[0][0]
         print(i, eid)
-        plot_goose_1(model, [batch], eid)
+        plot_single(model, [batch], eid)
 
 
 if __name__ == '__main__':

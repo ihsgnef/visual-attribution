@@ -71,7 +71,7 @@ class VanillaGradExplainer(Explainer):
 
     def __init__(self, times_input=False):
         """
-        Args: 
+        Args:
             times_input: Whether to multiply input as postprocessing.
         """
         self.times_input = times_input
@@ -100,7 +100,7 @@ class VATExplainer:
             xi:
                 hyperparameter of VAT.
             n_iter:
-                number of iterations. 
+                number of iterations.
             times_input:
                 Whether to multiply input as postprocessing.
         """
@@ -183,7 +183,7 @@ class CASO(VanillaGradExplainer):
                 Number of iterations of optimization.
             optim:
                 Type of optimizer (adam or sgd).
-            lr: 
+            lr:
                 Learning rate.
             init:
                 Initialization method (zero, random, grad, vat).
@@ -492,7 +492,7 @@ class BatchTuner:
         self.n_steps = n_steps
         self.n_iter_search = n_iter_search
 
-    def explain_one(self, model, x):
+    def explain_one(self, model, x, quiet=True):
         '''For one example, search for its best hyperparameters.'''
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
@@ -524,11 +524,12 @@ class BatchTuner:
                     best_saliency = saliency[best_idx]
                 if best_median > 0.945:
                     break
-        output = '{}: {:.3f}'.format(i, best_median)
-        for param, best in best_lambdas.items():
-            if isinstance(best, float):
-                output += ' {}: {:.3f} '.format(param, best)
-        print(output)
+        if not quiet:
+            output = '{}: {:.3f}'.format(i, best_median)
+            for param, best in best_lambdas.items():
+                if isinstance(best, float):
+                    output += ' {}: {:.3f} '.format(param, best)
+            print(output)
         return best_saliency, best_lambdas
 
     def explain(self, model, xs, get_lambdas=False):
