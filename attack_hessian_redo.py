@@ -451,37 +451,23 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
     f, ax = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
     for i, row in enumerate(matrix):
         for j, c in enumerate(row):
-            image = c.get('image', None)
+            image = c.get('image', np.zeros((244, 244)))
             cmap = c.get('cmap', None)
-            title = c.get('title', None)
-            yalign = c.get('yalign', 0.5)
-            rotate_title = c.get('rotate_title', False)
-            xlabel = c.get('xlabel', None)
-
             aax = ax[i, j] if len(matrix) > 1 else ax[j]
-            if image is None:
-                aax.imshow(np.zeros((244, 244)), cmap='gray')
-                aax.imshow(np.zeros((244, 244)), cmap='gray')
-            if cmap is None:
-                aax.imshow(image)
-            else:
-                aax.imshow(image, cmap=cmap)
-            if title is not None:
-                if rotate_title:
-                    aax.set_title(title, rotation=90,
-                                  x=-0.1, y=yalign, fontsize=fontsize)
-                else:
-                    # aax.set_title(c['title'], fontsize=fontsize)
-                    aax.text(0.5, 1.1, title,
-                             horizontalalignment='center',
-                             verticalalignment='center',
-                             transform=aax.transAxes,
-                             fontsize=fontsize)
-            if xlabel is not None:
-                aax.text(0.5, -0.1, xlabel,
-                         horizontalalignment='center',
-                         verticalalignment='center',
-                         transform=aax.transAxes,
+            aax.imshow(image, cmap=cmap)
+            if 'text_top' in c:
+                aax.text(0.5, 1.1, c['text_top'], ha='center', va='center',
+                         transform=aax.transAxes, fontsize=fontsize)
+            if 'text_bottom' in c:
+                aax.text(0.5, -0.1, c['text_bottom'], ha='center', va='center',
+                         transform=aax.transAxes, fontsize=fontsize)
+            if 'text_left' in c:
+                aax.text(-0.1, 0.5, c['text_left'], ha='center', va='center',
+                         rotation=90, transform=aax.transAxes,
+                         fontsize=fontsize)
+            if 'text_right' in c:
+                aax.text(1.1, 0.5, c['text_right'], ha='center', va='center',
+                         rotation=270, transform=aax.transAxes,
                          fontsize=fontsize)
             aax.set_axis_off()
     for i, j in rects:
@@ -616,7 +602,7 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
                 row.append({
                     'image': s,
                     'cmap': 'gray',
-                    'title': title
+                    'text_top': title
                 })
                 df.append({
                     'attacker': attacker,
@@ -670,8 +656,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
         for i, l2 in enumerate(l2s):
             row = [{
                 'image': image,
-                'title': 'l2={:.3f}'.format(l2),
-                'rotate_title': True
+                'text_left': 'l2={:.3f}'.format(l2),
             }]
             for l1 in l1s:
                 # only show explainer label on top of the row of original
@@ -685,7 +670,7 @@ def plot_l1_l2(agg_func=viz.agg_clip):
                 row.append({
                     'image': saliency,
                     'cmap': 'gray',
-                    'title': title,
+                    'text_top': title,
                 })
             matrix.append(row)
     plot_matrix(matrix, 'figures/l1_l2_{}.pdf'.format(example_id))
@@ -720,12 +705,12 @@ def plot_goose_1(model, batches, goose_id):
     explainers = [
         ('CASO', BatchTuner(CASO, n_steps=12)),
         ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
-        ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
-        ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
+        # ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
+        # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
         ('Gradient', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
+        # ('SmoothGrad', SmoothGradExplainer()),
         # ('CASO-E', Eigenvalue()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        # ('IntegratedGrad', IntegrateGradExplainer()),
     ]
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -733,29 +718,12 @@ def plot_goose_1(model, batches, goose_id):
     results = results[goose_id]
     image_input = transf(images[goose_id]).numpy()
     raw_image = transforms.Resize((224, 224))(images[goose_id])
-
-    # 0: delta
-    # 1: clip(delta)
-    # 2: delta * input
-    # 3: clip(delta * input)
     plt.rc('text', usetex=True)
-
     col0 = [
-        {'image': raw_image,
-         'title': r'$\Delta$',
-         'rotate_title': True},
-        {'image': raw_image,
-         'title': r'clip$(\Delta)$',
-         'rotate_title': True,
-         'yalign': 0.6},
-        {'image': raw_image,
-         'title': r'$\Delta\odot x$',
-         'rotate_title': True,
-         'yalign': 0.6},
-        {'image': raw_image,
-         'title': r'clip$(\Delta\odot x)$',
-         'rotate_title': True,
-         'yalign': 0.75},
+        {'image': raw_image, 'text_left': r'$\Delta$'},
+        {'image': raw_image, 'text_left': r'clip$(\Delta)$'},
+        {'image': raw_image, 'text_left': r'$\Delta\odot x$'},
+        {'image': raw_image, 'text_left': r'clip$(\Delta\odot x)$'},
     ]
     col0 += [{'image': raw_image} for _ in range(3)]
     matrix = [col0]
@@ -766,8 +734,7 @@ def plot_goose_1(model, batches, goose_id):
         saliency_1 = viz.agg_clip(saliency)
         saliency_2 = viz.agg_default(saliency * image_input)
         saliency_3 = viz.agg_clip(saliency * image_input)
-        # TODO add median difference
-        col.append({'image': saliency_0, 'cmap': 'gray', 'title': mth_name})
+        col.append({'image': saliency_0, 'cmap': 'gray', 'text_top': mth_name})
         col.append({'image': saliency_1, 'cmap': 'gray'})
         col.append({'image': saliency_2, 'cmap': 'gray'})
         col.append({'image': saliency_3, 'cmap': 'gray'})
@@ -795,12 +762,8 @@ def plot_goose_2_full(model, batches, goose_id):
     matrix = []
     image = transforms.Resize((224, 224))(images[goose_id])
     for i, l2 in enumerate(l2s):
-        row = [{
-            'image': image,
-            'title': r'$\lambda_2={}$'.format(l2_tex[i]),
-            'rotate_title': True,
-            'yalign': 0.65
-        }]
+        row = [{'image': image,
+                'text_left': r'$\lambda_2={}$'.format(l2_tex[i])}]
         for l1 in l1s:
             # only show explainer label on top of the row of original
             # example without perturbation
@@ -811,8 +774,8 @@ def plot_goose_2_full(model, batches, goose_id):
             row.append({
                 'image': saliency,
                 'cmap': 'gray',
-                'title': title,
-                'xlabel': r'$\eta={:.3f}$'.format(med_diff),
+                'text_top': title,
+                'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
             })
         matrix.append(row)
     plot_matrix(matrix, 'figures/goose_2_full.pdf', fontsize=30,
@@ -834,9 +797,7 @@ def plot_goose_2(model, batches, goose_id):
     image = resize(images[goose_id])
     row = [{
         'image': image,
-        'title': r'$\lambda_2=10^4$',
-        'rotate_title': True,
-        'yalign': 0.65
+        'text_left': r'$\lambda_2=10^4$',
     }]
     for l1 in l1s:
         cell = results[goose_id][l1]
@@ -845,8 +806,8 @@ def plot_goose_2(model, batches, goose_id):
         row.append({
             'image': saliency,
             'cmap': 'gray',
-            'title': r'$\lambda_1={}$'.format(l1),
-            'xlabel': r'$\eta={:.3f}$'.format(med_diff),
+            'text_top': r'$\lambda_1={}$'.format(l1),
+            'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
         })
     matrix = [row]
     plot_matrix(matrix, 'figures/goose_2.pdf', fontsize=30,
@@ -866,8 +827,8 @@ def plot_cherry_pick():
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
     example_ids = example_ids[20:100]
-    goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    example_ids = [goose_id]
+    # goose_id = 'ILSVRC2012_val_00045520.JPEG'
+    # example_ids = [goose_id]
     model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)
     batches = list(batches)
     for i, batch in enumerate(batches):
