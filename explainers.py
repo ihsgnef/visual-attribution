@@ -119,7 +119,7 @@ class NewExplainer(Explainer):
 
         BTB = B.transpose(0, 1).mm(B)
         sigma_B_sq, V_B = torch.symeig(BTB, eigenvectors=True)
-        print(sigma_B_sq.numpy().tolist())
+        print(sigma_B_sq.numpy().tolist()[-1])
         eigenvalues = sigma_B_sq.numpy()
         # print(eigenvalues.tolist())
         # print(sigma_B_sq.shape, V_B.shape)
@@ -214,7 +214,7 @@ class Eigenvalue(Explainer):
         d = torch.rand(batch_size, n_chs, height * width)
         d = _l2_normalize(d.sub(0.5)).cuda()
 
-        for _ in range(10):
+        for iterat in range(10):
             model.zero_grad()
             output = model(x)
             y = output.max(1)[1]
