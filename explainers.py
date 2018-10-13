@@ -70,7 +70,7 @@ class Explainer:
         pass
 
 
-class NewExplainer:
+class NewExplainer(Explainer):
 
     def explain(self, model, x, y=None):
         x_data = x.clone()
@@ -129,9 +129,17 @@ class NewExplainer:
         
         HEV = V_B.mm(sigma_B_inv)
         HEV = B.mm(HEV)
+    
+        x_grad = self.get_input_grad(x, output, y).data
+        newtons = HEV.transpose(0, 1).mm(x_grad) 
 
-        return None
+        recip = torch.diag(torch.reciprocal(sigma_B_sq))        
+        temp = HEV.mm(recip)
+        newtons = temp.mm(newtons)      
 
+        saliency = -1 * newtons
+
+        return saliency
 
 class VanillaGradExplainer(Explainer):
     """Regular input gradient explanation."""

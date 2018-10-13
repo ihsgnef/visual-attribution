@@ -10,7 +10,7 @@ from matplotlib import pylab as P
 
 from explainers import CASO, RobustCASO, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer
+    LambdaTunerExplainer, NewExplainer
 
 
 def main():
@@ -46,11 +46,11 @@ def main():
     all_saliency_maps = []
     #for model_name, method_name, _, kwargs in model_methods:
     #    print(method_name)
-    transf = get_preprocess('softplus50', 'sparse')            
-    model = utils.load_model('softplus50')            
+    transf = get_preprocess('resnet18', 'sparse')            
+    model = utils.load_model('resnet18')            
     model.cuda()
     model.eval()
-    explainer = LambdaTunerExplainer()#get_explainer(model, method_name, kwargs)
+    explainer = NewExplainer()#get_explainer(model, method_name, kwargs)
     inp = transf(raw_img)
     inp = utils.cuda_var(inp.unsqueeze(0), requires_grad=True).data
 
