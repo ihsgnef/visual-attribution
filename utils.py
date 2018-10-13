@@ -42,7 +42,7 @@ def load_model(arch):
 def load_data(batch_size, num_images, transf, dataset='imagenet'):
     batches = []
     if dataset == 'imagenet':
-        image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
+        image_path = '/scratch0/ILSVRC_val/**/*.JPEG'
         image_files = list(glob.iglob(image_path, recursive=True))
         np.random.seed(0)
         np.random.shuffle(image_files)
