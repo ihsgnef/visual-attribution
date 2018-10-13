@@ -181,7 +181,7 @@ def our_hessian(model, x):
         model.zero_grad()
         x_grad, = torch.autograd.grad(yh, x, retain_graph=True)
         ws.append(x_grad.data[0])
-    # classes, channel, height, width
+# classes, channel, height, width
     model.zero_grad()
     W = torch.stack(ws, -1)
     ######n_chs, height, width, n_cls = W.shape    
@@ -235,9 +235,7 @@ def our_hessian(model, x):
     recip = torch.reciprocal(sigma_B_sq)
     for index in range(n_cls - rank):
         recip[index] = 0.0 # remove smallest eigenvectors because rank is c - 1                    
-
-    print(torch.diag(sigma_B_sq).mm(torch.diag(recip)))
-    print(HEV.transpose(0,1).mm(HEV))    
+    
     recip = torch.diag(recip)            
     Hessian_inverse = HEV.mm(recip)
     Hessian_inverse = Hessian_inverse.mm(HEV.transpose(0, 1))
@@ -276,6 +274,8 @@ class Net(nn.Module):
         x = F.relu(self.fc4(x))        
         return self.fc5(x)            
 
+torch.manual_seed(0)
+np.random.seed(0)
 net = Net()
 criterion = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(net.parameters(), lr=0.1, momentum=0.9)
@@ -300,13 +300,13 @@ our_hessian, Hessian_inverse = our_hessian(net, fake_input.data)
 # print(np.matmul(our_hessian.numpy(), np.linalg.pinv(our_hessian.numpy())))
 # print(np.matmul(np.linalg.pinv(our_hessian.numpy()), our_hessian.numpy()))
 
-our_hessian = our_hessian
+assert(np.allclose(exact_hessian, our_hessian, rtol=1e-05, atol=1e-03))
+
 a = our_hessian
 B = np.linalg.pinv(our_hessian.numpy())
+
 print(np.dot(B,a))
 assert(np.allclose(a, np.dot(a, np.dot(B, a))))
 
 # explainer = CASO()
 # delta = explainer.explain(net, fake_input.data)
-# assert(np.allclose(exact_hessian, our_hessian, rtol=1e-05, atol=1e-03))
-
