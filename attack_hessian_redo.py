@@ -16,7 +16,8 @@ import viz
 import utils
 from explainers import CASO, RobustCASO, \
     VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer, BatchTuner, SmoothCASO, Eigenvalue
+    LambdaTunerExplainer, BatchTuner, SmoothCASO, Eigenvalue, \
+    NewExplainer
 from attackers import EmptyAttack, GhorbaniAttack, ScaledNoiseAttack
 
 import matplotlib.pyplot as plt
@@ -106,7 +107,7 @@ def attack_batch(model, batch, explainers, attackers,
 def setup_imagenet(batch_size=16, example_ids=None,
                    n_batches=-1, n_examples=-1,
                    shuffle=True, dump_name=None,
-                   arch='softplus50'):
+                   arch='resnet50'):
     model = utils.load_model(arch)
     model.eval()
     model.cuda()
@@ -357,8 +358,7 @@ def get_attack_saliency_maps(model, batches, explainers, attackers):
 
 
 def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
-    model, batches = setup_imagenet(batch_size=16, n_examples=n_examples,
-                                    arch='softplus50')
+    model, batches = setup_imagenet(batch_size=16, n_examples=n_examples)
 
     attackers = [
         ('Original', EmptyAttack()),  # empty attacker so perturbed = original
@@ -507,7 +507,10 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
         pickle.dump(df, f)
 
 
-def plot_goose_1(model, batches, goose_id):
+def plot_post_processing(model, batches, example_id):
+    '''Single image saliency mapping with four different post-processing
+        methods.
+    '''
     explainers = [
         ('CASO', BatchTuner(CASO, n_steps=12)),
         ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
@@ -521,9 +524,9 @@ def plot_goose_1(model, batches, goose_id):
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
 
-    results = results[goose_id]
-    image_input = transf(images[goose_id]).numpy()
-    raw_image = transforms.Resize((224, 224))(images[goose_id])
+    results = results[example_id]
+    image_input = transf(images[example_id]).numpy()
+    raw_image = transforms.Resize((224, 224))(images[example_id])
     plt.rc('text', usetex=True)
     col0 = [
         {'image': raw_image, 'text_left': r'$\Delta$'},
@@ -546,15 +549,14 @@ def plot_goose_1(model, batches, goose_id):
         col.append({'image': saliency_3, 'cmap': 'gray'})
         matrix.append(col)
     matrix = list(map(list, zip(*matrix)))
-    plot_matrix(matrix, 'figures/goose_1_{}.pdf'.format(goose_id))
-    print('done', goose_id)
+    plot_matrix(matrix, 'figures/goose_1_{}.pdf'.format(example_id))
+    print('done', example_id)
 
 
 def plot_goose_2_full(model, batches, goose_id):
     l1s = [1, 10, 50, 100, 200]
     l2s = [1e2, 1e3, 1e4, 1e5, 1e6]
     l2_tex = ['10^2', '10^3', '10^4', '10^5', '10^6']
-
     explainers = []
     for l1 in l1s:
         # use the combination as name
@@ -562,7 +564,6 @@ def plot_goose_2_full(model, batches, goose_id):
             explainers.append(
                 ((l1, l2), CASO(
                     lambda_l1=l1, lambda_l2=l2)))
-
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
     matrix = []
@@ -591,12 +592,10 @@ def plot_goose_2_full(model, batches, goose_id):
 def plot_goose_2(model, batches, goose_id):
     l1s = [1, 10, 50, 100, 200]
     l2 = 1e4
-
     explainers = []
     for l1 in l1s:
         explainers.append((l1, CASO(
             lambda_l1=l1, lambda_l2=l2)))
-
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
     resize = transforms.Resize((224, 224))
@@ -624,7 +623,7 @@ def plot_goose():
     goose_id = 'ILSVRC2012_val_00045520.JPEG'
     model, batches = setup_imagenet(example_ids=[goose_id])
     batches = list(batches)
-    plot_goose_1(model, batches, goose_id)
+    plot_post_processing(model, batches, goose_id)
     plot_goose_2(model, batches, goose_id)
     plot_goose_2_full(model, batches, goose_id)
 
@@ -632,19 +631,22 @@ def plot_goose():
 def plot_single(model, batches, example_id):
     attackers = [
         ('Original', EmptyAttack()),
-        ('Random', ScaledNoiseAttack()),
-        ('Ghorbani', GhorbaniAttack()),
+        # ('Random', ScaledNoiseAttack()),
+        # ('Ghorbani', GhorbaniAttack()),
     ]
 
     explainers = [
-        ('CASO', BatchTuner(CASO, n_steps=12)),
-        ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
+        # ('CASO', BatchTuner(CASO, n_steps=12)),
+        # ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
         # ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
         # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
-        ('Gradient', VanillaGradExplainer()),
+        # ('Eigen', Eigenvalue()),
+        # ('Gradient', VanillaGradExplainer()),
         # ('SmoothGrad', SmoothGradExplainer()),
         # ('CASO-E', Eigenvalue()),
         # ('IntegratedGrad', IntegrateGradExplainer()),
+        ('Eigen', Eigenvalue()),
+        ('New', NewExplainer()),
     ]
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)
@@ -669,7 +671,7 @@ def plot_single(model, batches, example_id):
                 'image': s,
                 'cmap': 'gray',
                 'text_top': explainer if i == 0 else '',
-                'text_bottom': 'r{:.3f}'.format(med_diff)
+                'text_bottom': r'{:.3f}'.format(med_diff)
             })
         matrix.append(row)
     plot_matrix(matrix, 'figures/single_{}.pdf'.format(example_id))
@@ -679,7 +681,7 @@ def plot_single(model, batches, example_id):
 def plot_cherry_pick():
     with open('ghorbani.json') as f:
         example_ids = json.load(f)
-    example_ids = example_ids[20:100]
+    example_ids = example_ids[40:100]
     # goose_id = 'ILSVRC2012_val_00045520.JPEG'
     # example_ids = [goose_id]
     model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)

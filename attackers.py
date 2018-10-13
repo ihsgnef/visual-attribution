@@ -74,7 +74,7 @@ class Attacker:
 
     def explain(self, model, x, saliency=None):
         '''Generate adversarial perturbation for input x.
-            Attackers share the general API with Explainers, except for some 
+            Attackers share the general API with Explainers, except for some
             attacks which target specific saliency mapping.
         Args:
             model (torch.nn.Module):

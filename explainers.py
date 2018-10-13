@@ -1,3 +1,5 @@
+import pickle
+import time
 import numpy as np
 from collections import defaultdict, OrderedDict
 
@@ -29,7 +31,7 @@ class Explainer:
             x (torch.autograd.Variable):
                 Input variable.
             output (torch.autograd.Variable):
-                Output distribution after softmax.
+                Output before softmax.
             y (torch.autograd.Variable):
                 Class label.
             create_graph:
@@ -66,6 +68,69 @@ class Explainer:
         '''
         # TODO add optional y
         pass
+
+
+class NewExplainer:
+
+    def explain(self, model, x, y=None):
+        x_data = x.clone()
+
+        x = Variable(x, requires_grad=True)
+        y_hat = model(x)
+        ws = []
+        '''assume batch_size = 1'''
+        for yh in y_hat[0]:
+            model.zero_grad()
+            x_grad, = torch.autograd.grad(yh, x, retain_graph=True)
+            ws.append(x_grad.data[0])
+        # classes, channel, height, width
+        model.zero_grad()
+        W = torch.stack(ws, -1)
+        n_chs, height, width, n_cls = W.shape
+        W = W.view(-1, n_cls)
+        # print(W.shape)
+
+        y_prob = F.softmax(y_hat, 1).data  # 1, classes
+
+        W = W.cpu()
+        y_prob = y_prob.cpu()
+
+        # with open('matrices.pkl', 'wb') as f:
+        #     pickle.dump({
+        #         'y_prob': y_prob.cpu().numpy(),
+        #         'W': W.cpu().numpy(),
+        #     }, f)
+
+        D = torch.diag(y_prob[0])
+        A = (D - y_prob.transpose(0, 1).mm(y_prob))
+        # print(A.shape)
+
+        '''sklearn'''
+
+        sigma_A, U_A = torch.symeig(A, eigenvectors=True)
+        # print(sigma_A.shape)
+        # print(U.shape)
+
+        sigma_A_sqrt = torch.sqrt(sigma_A)
+        sigma_A_sqrt = torch.diag(sigma_A_sqrt)
+        B = W.mm(U_A)
+        B = B.mm(sigma_A_sqrt)
+        # print(B.shape)
+
+        BTB = B.transpose(0, 1).mm(B)
+        sigma_B_sq, V_B = torch.symeig(BTB, eigenvectors=True)
+        print(sigma_B_sq.numpy().tolist())
+        eigenvalues = sigma_B_sq.numpy()
+        # print(eigenvalues.tolist())
+        # print(sigma_B_sq.shape, V_B.shape)
+
+        sigma_B_inv = torch.rsqrt(sigma_B_sq)
+        sigma_B_inv = torch.diag(sigma_B_inv)
+        
+        HEV = V_B.mm(sigma_B_inv)
+        HEV = B.mm(HEV)
+
+        return None
 
 
 class VanillaGradExplainer(Explainer):
@@ -148,12 +213,12 @@ class Eigenvalue(Explainer):
             loss = F.cross_entropy(output, y)
             x_grad, = torch.autograd.grad(loss, x, create_graph=True)
             x_grad = x_grad.view(batch_size, n_chs, -1)
-            d = Variable(d, requires_grad=True)
-            hvp, = torch.autograd.grad(x_grad.dot(d).sum(), x)
+            d_var = Variable(d, requires_grad=True)
+            hvp, = torch.autograd.grad(x_grad.dot(d_var).sum(), x)
             hvp = hvp.data.view(batch_size, n_chs, -1)
             taylor_2 = (d * hvp).sum()
             d = _l2_normalize(hvp).view(batch_size, n_chs, -1)
-            print(taylor_2)
+            print('ev:', taylor_2)
         return VanillaGradExplainer().explain(model, x_data)
 
 
