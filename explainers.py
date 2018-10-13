@@ -129,17 +129,25 @@ class NewExplainer(Explainer):
         
         HEV = V_B.mm(sigma_B_inv)
         HEV = B.mm(HEV)
-    
-        x_grad = self.get_input_grad(x, output, y).data
+
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y).cpu().data
+        x_grad = x_grad.view(-1, 1)
+        print(x_grad.shape)
+        print(HEV.shape)
         newtons = HEV.transpose(0, 1).mm(x_grad) 
 
         recip = torch.diag(torch.reciprocal(sigma_B_sq))        
         temp = HEV.mm(recip)
         newtons = temp.mm(newtons)      
 
-        saliency = -1 * newtons
+        delta = -1 * newtons
 
-        return saliency
+        batch_size = 1
+        delta = delta.view((batch_size, n_chs, height, width))
+
+        return delta
 
 class VanillaGradExplainer(Explainer):
     """Regular input gradient explanation."""
