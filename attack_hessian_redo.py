@@ -113,14 +113,14 @@ def setup_imagenet(batch_size=16, example_ids=None,
     model.cuda()
     print('model loaded')
 
-    image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
+    image_path = '/scratch0/ILSVRC_val/**/*.JPEG'
     image_files = list(glob.iglob(image_path, recursive=True))
     image_files = sorted(image_files, key=lambda x: os.path.basename(x))
     real_ids = [os.path.basename(x) for x in image_files]
 
     from imagenet1000_clsid_to_human import clsid_to_human
 
-    label_path = '/fs/imageNet/imagenet/ILSVRC2012_devkit_t12/' \
+    label_path = '/scratch0/ILSVRC2012_devkit_t12/' \
                  + 'data/ILSVRC2012_validation_ground_truth.txt'
     with open(label_path) as f:
         labels = [clsid_to_human[int(x)-1] for x in f.readlines()]
