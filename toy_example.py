@@ -236,6 +236,8 @@ def our_hessian(model, x):
     for index in range(n_cls - rank):
         recip[index] = 0.0 # remove smallest eigenvectors because rank is c - 1                    
 
+    print(torch.diag(sigma_B_sq).mm(torch.diag(recip)))
+    print(HEV.transpose(0,1).mm(HEV))    
     recip = torch.diag(recip)            
     Hessian_inverse = HEV.mm(recip)
     Hessian_inverse = Hessian_inverse.mm(HEV.transpose(0, 1))
@@ -292,12 +294,10 @@ our_hessian, Hessian_inverse = our_hessian(net, fake_input.data)
 # print("Exact Hessian Using PyTorch")
 # print(exact_hessian)
 
-# print(np.matmul(our_hessian.numpy(), np.linalg.pinv(our_hessian.numpy())))
-# print(np.matmul(np.linalg.pinv(our_hessian.numpy()), our_hessian.numpy()))
-# print(our_hessian.mm(Hessian_inverse))
-# print(Hessian_inverse.mm(our_hessian))
+print(our_hessian.mm(Hessian_inverse))
+print(Hessian_inverse.mm(our_hessian))
 
-explainer = CASO()
-delta = explainer.explain(net, fake_input.data)
+# explainer = CASO()
+# delta = explainer.explain(net, fake_input.data)
 
 assert(np.allclose(exact_hessian, our_hessian, rtol=1e-05, atol=1e-03))
