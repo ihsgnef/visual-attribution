@@ -74,11 +74,9 @@ class NewExplainer(Explainer):
 
     def explain(self, model, x, y=None):
         x_data = x.clone()
-
         x = Variable(x, requires_grad=True)
         y_hat = model(x)
         ws = []
-        '''assume batch_size = 1'''
         for yh in y_hat[0]:
             model.zero_grad()
             x_grad, = torch.autograd.grad(yh, x, retain_graph=True)
@@ -86,56 +84,60 @@ class NewExplainer(Explainer):
         # classes, channel, height, width
         model.zero_grad()
         W = torch.stack(ws, -1)
-        n_chs, height, width, n_cls = W.shape
+        n_chs, height, width, n_cls = W.shape            
         W = W.view(-1, n_cls)
-        # print(W.shape)
-
+        
         y_prob = F.softmax(y_hat, 1).data  # 1, classes
 
         W = W.cpu()
         y_prob = y_prob.cpu()
-
-        # with open('matrices.pkl', 'wb') as f:
-        #     pickle.dump({
-        #         'y_prob': y_prob.cpu().numpy(),
-        #         'W': W.cpu().numpy(),
-        #     }, f)
-
+        
         D = torch.diag(y_prob[0])
-        A = (D - y_prob.transpose(0, 1).mm(y_prob))
-        # print(A.shape)
-
-        '''sklearn'''
+        A = (D - y_prob.transpose(0, 1).mm(y_prob))    
 
         sigma_A, U_A = torch.symeig(A, eigenvectors=True)
-        # print(sigma_A.shape)
-        # print(U.shape)
-
+        
         sigma_A_sqrt = torch.sqrt(sigma_A)
         sigma_A_sqrt = torch.diag(sigma_A_sqrt)
         B = W.mm(U_A)
         B = B.mm(sigma_A_sqrt)
-        # print(B.shape)
 
         BTB = B.transpose(0, 1).mm(B)
-        sigma_B_sq, V_B = torch.symeig(BTB, eigenvectors=True)
-        print(sigma_B_sq.numpy().tolist()[-1])
-        eigenvalues = sigma_B_sq.numpy()
-        # print(eigenvalues.tolist())
-        # print(sigma_B_sq.shape, V_B.shape)
+        sigma_B_sq, V_B = torch.symeig(BTB, eigenvectors=True)    
+        rank = np.linalg.matrix_rank(BTB)    
 
-        sigma_B_inv = torch.rsqrt(sigma_B_sq)
-        sigma_B_inv = torch.diag(sigma_B_inv)
+        # reverse order of sigma    
+        # inv_idx = torch.arange(sigma_B_sq.size(0)-1, -1, -1).long()    
+        # sigma_B_sq = sigma_B_sq.index_select(0, inv_idx)    
+
+        # print('rank', rank)
+        # zero out lower eigenvalues
+        for index in range(n_cls - rank):                
+            sigma_B_sq[index] = 0.0        
+            V_B[index] = 0.0    
+
+        # print('Our Method Eigenvalues', sigma_B_sq.numpy().tolist())    
+                
+        sigma_B_inv = torch.rsqrt(sigma_B_sq)        
         
+        for index in range(n_cls - rank):
+            sigma_B_inv[index] = 0.0 # remove smallest eigenvectors because rank is c - 1            
+
+        sigma_B_inv = torch.diag(sigma_B_inv)
+
         HEV = V_B.mm(sigma_B_inv)
         HEV = B.mm(HEV)
+        # print('Our Method Eigenvectors', HEV)
 
+        # inverse
+        recip = torch.reciprocal(sigma_B_sq)
+        for index in range(n_cls - rank):
+            recip[index] = 0.0 # remove smallest eigenvectors because rank is c - 1                    
+            
         output = model(x)
         y = output.max(1)[1]
         x_grad = self.get_input_grad(x, output, y).cpu().data
-        x_grad = x_grad.view(-1, 1)
-        print(x_grad.shape)
-        print(HEV.shape)
+        x_grad = x_grad.view(-1, 1)        
         newtons = HEV.transpose(0, 1).mm(x_grad) 
 
         recip = torch.diag(torch.reciprocal(sigma_B_sq))        
@@ -143,10 +145,8 @@ class NewExplainer(Explainer):
         newtons = temp.mm(newtons)      
 
         delta = -1 * newtons
-
         batch_size = 1
         delta = delta.view((batch_size, n_chs, height, width))
-
         return delta
 
 class VanillaGradExplainer(Explainer):
