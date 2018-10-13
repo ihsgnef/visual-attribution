@@ -278,26 +278,35 @@ class Net(nn.Module):
 
 net = Net()
 criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(net.parameters(), lr=0.1, momentum=0.9)
 
 fake_input = Variable(torch.randn(1,5), requires_grad=True)
 target = Variable(torch.LongTensor(1).random_(0, 1))  # a dummy target, for example
-
 output = net(fake_input)
-
 loss = criterion(output, target)
 
 power_method(net, fake_input.data)
 exact_hessian = exact_hessian(autograd.grad(loss, fake_input, create_graph=True), fake_input)
 our_hessian, Hessian_inverse = our_hessian(net, fake_input.data)
+
 # print("Full Hessian Using Our Method")
 # print(our_hessian.numpy())
 # print("Exact Hessian Using PyTorch")
 # print(exact_hessian)
 
-print(our_hessian.mm(Hessian_inverse))
-print(Hessian_inverse.mm(our_hessian))
+# print(our_hessian.mm(Hessian_inverse))
+# print(Hessian_inverse.mm(our_hessian))
+
+# print(np.matmul(our_hessian.numpy(), np.linalg.pinv(our_hessian.numpy())))
+# print(np.matmul(np.linalg.pinv(our_hessian.numpy()), our_hessian.numpy()))
+
+our_hessian = our_hessian
+a = our_hessian
+B = np.linalg.pinv(our_hessian.numpy())
+print(np.dot(B,a))
+assert(np.allclose(a, np.dot(a, np.dot(B, a))))
 
 # explainer = CASO()
 # delta = explainer.explain(net, fake_input.data)
+# assert(np.allclose(exact_hessian, our_hessian, rtol=1e-05, atol=1e-03))
 
-assert(np.allclose(exact_hessian, our_hessian, rtol=1e-05, atol=1e-03))
