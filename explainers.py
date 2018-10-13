@@ -206,7 +206,7 @@ class Eigenvalue(Explainer):
         d = torch.rand(batch_size, n_chs, height * width)
         d = _l2_normalize(d.sub(0.5)).cuda()
 
-        for _ in range(1):
+        for _ in range(10):
             model.zero_grad()
             output = model(x)
             y = output.max(1)[1]
@@ -218,7 +218,8 @@ class Eigenvalue(Explainer):
             hvp = hvp.data.view(batch_size, n_chs, -1)
             taylor_2 = (d * hvp).sum()
             d = _l2_normalize(hvp).view(batch_size, n_chs, -1)
-            print('ev:', taylor_2)
+            print('Power Method Eigenvalue Iteration', iterat, ':', taylor_2)    
+        print('Power Method Eigenvector', d)    
         return VanillaGradExplainer().explain(model, x_data)
 
 
