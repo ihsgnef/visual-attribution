@@ -9,15 +9,14 @@ from scipy.stats import spearmanr
 from collections import defaultdict
 
 import torch
-from torch.autograd import Variable
 import torchvision.transforms as transforms
 
 import viz
 import utils
-from explainers import CASO, RobustCASO, \
-    VanillaGradExplainer, IntegrateGradExplainer, SmoothGradExplainer, \
-    LambdaTunerExplainer, BatchTuner, SmoothCASO, Eigenvalue, \
-    NewExplainer
+from explainers import CASO, \
+    VanillaGrad, IntegrateGrad, SmoothGrad, \
+    BatchTuner, SmoothCASO, Eigenvalue, \
+    NewExplainer, VATExplainer
 from attackers import EmptyAttack, GhorbaniAttack, ScaledNoiseAttack
 
 import matplotlib.pyplot as plt
@@ -67,9 +66,9 @@ def saliency_overlap(s1, s2):
 
 def get_prediction(model, batch, to_human=True):
     from imagenet1000_clsid_to_human import clsid_to_human
-    ys = model(Variable(batch)).max(1)[1].data
+    ys = model(batch).max(1)[1].data
     if to_human:
-        return [clsid_to_human[y] for y in ys]
+        return [clsid_to_human[y] for y in ys.tolist()]
     else:
         return ys
 
@@ -113,14 +112,14 @@ def setup_imagenet(batch_size=16, example_ids=None,
     model.cuda()
     print('model loaded')
 
-    image_path = '/scratch0/ILSVRC_val/**/*.JPEG'
+    image_path = '/fs/imageNet/imagenet/ILSVRC_val/**/*.JPEG'
     image_files = list(glob.iglob(image_path, recursive=True))
     image_files = sorted(image_files, key=lambda x: os.path.basename(x))
     real_ids = [os.path.basename(x) for x in image_files]
 
     from imagenet1000_clsid_to_human import clsid_to_human
 
-    label_path = '/scratch0/ILSVRC2012_devkit_t12/' \
+    label_path = '/fs/imageNet/imagenet/ILSVRC2012_devkit_t12/' \
                  + 'data/ILSVRC2012_validation_ground_truth.txt'
     with open(label_path) as f:
         labels = [clsid_to_human[int(x)-1] for x in f.readlines()]
@@ -176,10 +175,9 @@ def run_attack_baselines(n_examples=4):
     explainers = [
         ('CASO', BatchTuner(CASO, n_steps=12)),
         ('CASO-1', BatchTuner(CASO, n_steps=12, t2_lo=0, t2_hi=0)),
-        ('CASO-R', BatchTuner(RobustCASO, n_steps=12)),
-        ('Gradient', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
-        ('IntegratedGrad', IntegrateGradExplainer()),
+        ('Gradient', VanillaGrad()),
+        ('SmoothGrad', SmoothGrad()),
+        ('IntegratedGrad', IntegrateGrad()),
     ]
     results = []
     n_batches = int(n_examples / 16)
@@ -289,6 +287,7 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
         ])
     # f.tight_layout(pad=2.0, h_pad=2.0, w_pad=2.0)
     f.savefig(filename)
+    plt.close('all')
 
 
 def get_saliency_maps(model, batches, explainers):
@@ -372,10 +371,9 @@ def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
         # ('CASO-1', BatchTuner(CASO, n_steps=12, t2_lo=0, t2_hi=0)),
         # ('CASO-2', BatchTuner(CASO, n_steps=12, lambda_t1=0)),
         ('SmoothCASO', SmoothCASO(n_steps=12)),
-        # ('CASO-R', BatchTuner(RobustCASO, n_steps=12)),
-        ('Gradient', VanillaGradExplainer()),
-        ('SmoothGrad', SmoothGradExplainer()),
-        # ('IntegratedGrad', IntegrateGradExplainer()),
+        ('Gradient', VanillaGrad()),
+        ('SmoothGrad', SmoothGrad()),
+        # ('IntegratedGrad', IntegrateGrad()),
     ]
 
     results, ids, images, labels = get_attack_saliency_maps(
@@ -514,12 +512,11 @@ def plot_post_processing(model, batches, example_id):
     explainers = [
         ('CASO', BatchTuner(CASO, n_steps=12)),
         ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
-        # ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
         # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
-        ('Gradient', VanillaGradExplainer()),
-        # ('SmoothGrad', SmoothGradExplainer()),
+        ('Gradient', VanillaGrad()),
+        # ('SmoothGrad', SmoothGrad()),
         # ('CASO-E', Eigenvalue()),
-        # ('IntegratedGrad', IntegrateGradExplainer()),
+        # ('IntegratedGrad', IntegrateGrad()),
     ]
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
@@ -636,17 +633,16 @@ def plot_single(model, batches, example_id):
     ]
 
     explainers = [
-        # ('CASO', BatchTuner(CASO, n_steps=12)),
+        ('CASO', BatchTuner(CASO)),
         # ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
-        # ('CASOR', BatchTuner(RobustCASO, n_steps=12)),
         # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
         # ('Eigen', Eigenvalue()),
-        # ('Gradient', VanillaGradExplainer()),
-        # ('SmoothGrad', SmoothGradExplainer()),
+        # ('Gradient', VanillaGrad()),
+        # ('SmoothGrad', SmoothGrad()),
         # ('CASO-E', Eigenvalue()),
-        # ('IntegratedGrad', IntegrateGradExplainer()),
-        ('Eigen', Eigenvalue()),
-        ('New', NewExplainer()),
+        # ('IntegratedGrad', IntegrateGrad()),
+        # ('Eigen', Eigenvalue()),
+        # ('New', NewExplainer()),
     ]
     results, ids, images, labels = get_attack_saliency_maps(
         model, batches, explainers, attackers)

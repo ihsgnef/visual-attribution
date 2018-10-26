@@ -1,12 +1,9 @@
-import pickle
-import time
 import numpy as np
 from collections import defaultdict, OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
 
 import viz
 
@@ -18,7 +15,7 @@ def _l2_normalize(d):
 
 
 def _kl_div(log_probs, probs):
-    kld = F.kl_div(log_probs, probs, size_average=False)
+    kld = F.kl_div(log_probs, probs, reduction='sum')
     return kld / log_probs.shape[0]
 
 
@@ -28,18 +25,18 @@ class Explainer:
                        cross_entropy=True):
         '''Compute gradient of loss w.r.t input x.
         Args:
-            x (torch.autograd.Variable):
-                Input variable.
-            output (torch.autograd.Variable):
+            x (torch.Tensor):
+                Input tensor.
+            output (torch.Tensor):
                 Output before softmax.
-            y (torch.autograd.Variable):
+            y (torch.Tensor):
                 Class label.
             create_graph:
                 Set to True if higher-order gradient will be used.
             cross_entropy:
                 Use by default the cross entropy loss.
         Rerturns:
-            torch.autograd.Variable:
+            torch.Tensor:
                 The gradient, shape identical to x.
         '''
         if cross_entropy:
@@ -70,86 +67,7 @@ class Explainer:
         pass
 
 
-class NewExplainer(Explainer):
-
-    def explain(self, model, x, y=None):
-        x_data = x.clone()
-        x = Variable(x, requires_grad=True)
-        y_hat = model(x)
-        ws = []
-        for yh in y_hat[0]:
-            model.zero_grad()
-            x_grad, = torch.autograd.grad(yh, x, retain_graph=True)
-            ws.append(x_grad.data[0])
-        # classes, channel, height, width
-        model.zero_grad()
-        W = torch.stack(ws, -1)
-        n_chs, height, width, n_cls = W.shape            
-        W = W.view(-1, n_cls)
-        
-        y_prob = F.softmax(y_hat, 1).data  # 1, classes
-
-        W = W.cpu()
-        y_prob = y_prob.cpu()
-        
-        D = torch.diag(y_prob[0])
-        A = (D - y_prob.transpose(0, 1).mm(y_prob))    
-
-        sigma_A, U_A = torch.symeig(A, eigenvectors=True)
-        
-        sigma_A_sqrt = torch.sqrt(sigma_A)
-        sigma_A_sqrt = torch.diag(sigma_A_sqrt)
-        B = W.mm(U_A)
-        B = B.mm(sigma_A_sqrt)
-
-        BTB = B.transpose(0, 1).mm(B)
-        sigma_B_sq, V_B = torch.symeig(BTB, eigenvectors=True)    
-        rank = np.linalg.matrix_rank(BTB)    
-
-        # reverse order of sigma    
-        # inv_idx = torch.arange(sigma_B_sq.size(0)-1, -1, -1).long()    
-        # sigma_B_sq = sigma_B_sq.index_select(0, inv_idx)    
-
-        # print('rank', rank)
-        # zero out lower eigenvalues
-        for index in range(n_cls - rank):                
-            sigma_B_sq[index] = 0.0        
-            V_B[index] = 0.0    
-
-        # print('Our Method Eigenvalues', sigma_B_sq.numpy().tolist())    
-                
-        sigma_B_inv = torch.rsqrt(sigma_B_sq)        
-        
-        for index in range(n_cls - rank):
-            sigma_B_inv[index] = 0.0 # remove smallest eigenvectors because rank is c - 1            
-
-        sigma_B_inv = torch.diag(sigma_B_inv)
-
-        HEV = V_B.mm(sigma_B_inv)
-        HEV = B.mm(HEV)
-        # print('Our Method Eigenvectors', HEV)
-
-        # inverse
-        recip = torch.reciprocal(sigma_B_sq)
-        for index in range(n_cls - rank):
-            recip[index] = 0.0 # remove smallest eigenvectors because rank is c - 1                    
-            
-        output = model(x)
-        y = output.max(1)[1]
-        x_grad = self.get_input_grad(x, output, y).cpu().data
-        x_grad = x_grad.view(-1, 1)        
-        newtons = HEV.transpose(0, 1).mm(x_grad) 
-
-        recip = torch.diag(torch.reciprocal(sigma_B_sq))        
-        temp = HEV.mm(recip)
-        newtons = temp.mm(newtons)      
-
-        delta = -1 * newtons
-        batch_size = 1
-        delta = delta.view((batch_size, n_chs, height, width))
-        return delta
-
-class VanillaGradExplainer(Explainer):
+class VanillaGrad(Explainer):
     """Regular input gradient explanation."""
 
     def __init__(self, times_input=False):
@@ -160,13 +78,13 @@ class VanillaGradExplainer(Explainer):
         self.times_input = times_input
 
     def explain(self, model, x):
-        x = Variable(x, requires_grad=True)
+        x.requires_grad_()
         output = model(x)
         y = output.max(1)[1]
         x_grad = self.get_input_grad(x, output, y).data
         if self.times_input:
-            x_grad *= x.data
-        return x_grad
+            x_grad *= x
+        return x_grad.detach()
 
 
 class VATExplainer:
@@ -177,7 +95,7 @@ class VATExplainer:
     See https://arxiv.org/abs/1507.00677.
     """
 
-    def __init__(self, xi=1e-6, n_iter=1, times_input=False):
+    def __init__(self, xi=1e-6, n_iter=10, times_input=False):
         """
         Args:
             xi:
@@ -188,55 +106,56 @@ class VATExplainer:
                 Whether to multiply input as postprocessing.
         """
         self.xi = xi
+        self.n_iter = n_iter
         self.times_input = times_input
 
     def explain(self, model, x, KL=True):
-        x_var = Variable(x.clone(), requires_grad=True)
-        output = model(x_var)
-        y = output.max(1)[1]
+        logits = model(x)
+        y = logits.max(1)[1]
         if KL:
-            pred = F.log_softmax(model(x_var), dim=1).detach()
-        d = torch.rand(x_var.shape).sub(0.5).cuda()
-        d = _l2_normalize(d)
+            p_0 = F.softmax(logits, dim=1).detach()
+        delta = torch.rand(x.shape).sub(0.5).cuda()
+        delta = _l2_normalize(delta)
+        delta.requires_grad_()
         for _ in range(self.n_iter):
             model.zero_grad()
-            d = Variable(self.xi * d, requires_grad=True)
-            pred_hat = model(x_var + d)
+            delta = self.xi * delta
+            logits_hat = model(x + delta)
             if KL:
-                adv_loss = _kl_div(F.log_softmax(pred_hat, dim=1), pred)
+                p_hat = F.softmax(logits_hat, dim=1)
+                adv_loss = _kl_div(p_hat, p_0)
             else:
-                adv_loss = F.cross_entropy(pred_hat, y)
-            d_grad, = torch.autograd.grad(adv_loss, d)
-            d = _l2_normalize(d_grad.data)
+                adv_loss = F.cross_entropy(F.log_softmax(logits_hat), y)
+            d_grad, = torch.autograd.grad(adv_loss, delta)
+            delta = _l2_normalize(d_grad.data)
+            delta.requires_grad_()
         if self.times_input:
-            d *= x
-        return d
+            delta *= x
+        return delta.detach()
 
 
 class Eigenvalue(Explainer):
 
     def explain(self, model, x):
+        x.requires_grad_()
         batch_size, n_chs, height, width = x.shape
-        x_data = x.clone()
-        x = Variable(x, requires_grad=True)
-        d = torch.rand(batch_size, n_chs, height * width)
-        d = _l2_normalize(d.sub(0.5)).cuda()
-
-        for iterat in range(10):
+        delta = torch.rand(batch_size, n_chs * height * width)
+        delta = _l2_normalize(delta.sub(0.5)).cuda()
+        for i in range(10):
             model.zero_grad()
-            output = model(x)
-            y = output.max(1)[1]
-            loss = F.cross_entropy(output, y)
+            logits = model(x)
+            y = logits.max(1)[1]
+            loss = F.cross_entropy(logits, y)
             x_grad, = torch.autograd.grad(loss, x, create_graph=True)
-            x_grad = x_grad.view(batch_size, n_chs, -1)
-            d_var = Variable(d, requires_grad=True)
-            hvp, = torch.autograd.grad(x_grad.dot(d_var).sum(), x)
-            hvp = hvp.data.view(batch_size, n_chs, -1)
-            taylor_2 = (d * hvp).sum()
-            d = _l2_normalize(hvp).view(batch_size, n_chs, -1)
-            print('Power Method Eigenvalue Iteration', iterat, ':', taylor_2)    
-        print('Power Method Eigenvector', d)    
-        return VanillaGradExplainer().explain(model, x_data)
+            x_grad = x_grad.view(batch_size, -1)
+            hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
+            hvp = hvp.data.view(batch_size, -1)
+            ev = (delta * hvp).sum()
+            delta = _l2_normalize(hvp).view(batch_size, -1)
+            print('Power Method Eigenvalue Iteration',
+                  '{}: {:.4f}'.format(i, ev.tolist()))
+        print()
+        return VanillaGrad().explain(model, x)
 
 
 class CASO(Explainer):
@@ -283,7 +202,7 @@ class CASO(Explainer):
         self.lr = lr
         self.init = init
         self.times_input = times_input
-        assert init in ['zero', 'random', 'grad', 'vat']
+        assert init in ['zero', 'random', 'grad', 'eig']
         self.history = defaultdict(list)
 
     def initialize_delta(self, model, x):
@@ -294,21 +213,20 @@ class CASO(Explainer):
         elif self.init == 'grad':
             output = model(x)
             y = output.max(1)[1]
-            delta = self.get_input_grad(x, output, y).data
-            delta = delta.view(batch_size, n_chs, -1)
+            delta = self.get_input_grad(x, output, y).detach()
         elif self.init == 'random':
-            delta = torch.rand((batch_size, n_chs, height * width))
+            delta = torch.rand(x.shape)
             delta = delta.sub(0.5).cuda()
             delta = _l2_normalize(delta)
-        elif self.init == 'vat':
+        elif self.init == 'eig':
             delta = VATExplainer().explain(model, x.data)
-            delta = delta.view(batch_size, n_chs, height * width)
+        delta = delta.view(batch_size, -1)
         delta = nn.Parameter(delta, requires_grad=True)
         return delta
 
     def explain(self, model, x):
+        x.requires_grad_()
         batch_size, n_chs, height, width = x.shape
-        x = Variable(x, requires_grad=True)
         delta = self.initialize_delta(model, x)
         if self.optim == 'sgd':
             optimizer = torch.optim.SGD([delta], lr=self.lr, momentum=0.9)
@@ -319,23 +237,18 @@ class CASO(Explainer):
             output = model(x)
             y = output.max(1)[1]
             x_grad = self.get_input_grad(x, output, y, create_graph=True)
-            x_grad = x_grad.view((batch_size, n_chs, -1))
-            hvp, = torch.autograd.grad(x_grad.dot(delta).sum(), x,
+            x_grad = x_grad.view((batch_size, -1))
+            hvp, = torch.autograd.grad((x_grad * delta).sum(), x,
                                        create_graph=True)
-            hvp = hvp.view((batch_size, n_chs, -1))
-            t1 = x_grad.dot(delta).sum()
+            hvp = hvp.view((batch_size, -1))
+            t1 = (x_grad * delta)
             t2 = 0.5 * (delta * hvp)
-            l1 = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
-            l2 = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
-            # t1 = t1.sum(2).sum(1) / (n_chs * height * width)
-            t2 = t2.sum(2).sum(1) / (n_chs * height * width)
-            l1 = l1.sum(2).sum(1) / (n_chs * height * width)
-            l2 = l2.sum(2).sum(1) / (n_chs * height * width)
-            # t1 = (self.lambda_t1 * t1).sum() / batch_size
-            t1 = self.lambda_t1 * t1
-            t2 = (self.lambda_t2 * t2).sum() / batch_size
-            l1 = (self.lambda_l1 * l1).sum() / batch_size
-            l2 = (self.lambda_l2 * l2).sum() / batch_size
+            l1 = F.l1_loss(delta, torch.zeros_like(delta), reduction='none')
+            l2 = F.mse_loss(delta, torch.zeros_like(delta), reduction='none')
+            t1 = (self.lambda_t1 * t1).sum() / x.nelement()
+            t2 = (self.lambda_t2 * t2).sum() / x.nelement()
+            l1 = (self.lambda_l1 * l1).sum() / x.nelement()
+            l2 = (self.lambda_l2 * l2).sum() / x.nelement()
             loss = (
                 - t1
                 - t2
@@ -343,14 +256,10 @@ class CASO(Explainer):
                 + l2
             )
             # log optimization
-            vmax = delta.abs().sum(1).max(1)[0]
-            vmin = delta.abs().sum(1).min(1)[0]
             self.history['l1'].append(l1.data.cpu().numpy())
             self.history['l2'].append(l2.data.cpu().numpy())
             self.history['grad'].append(t1.data.cpu().numpy())
             self.history['hessian'].append(t2.data.cpu().numpy())
-            self.history['vmax'].append(vmax.data.cpu().numpy())
-            self.history['vmin'].append(vmin.data.cpu().numpy())
             # update delta
             optimizer.zero_grad()
             loss.backward()
@@ -361,91 +270,89 @@ class CASO(Explainer):
         return delta
 
 
-class RobustCASO(CASO):
-
-    '''
-    + g^t Delta
-    - \lambda_t2 |(\Delta-g/2)^t H g|
-    - \lambda_l2 |\Delta|_2^2
-    - \lambda_l1 |\Delta|_1
-    '''
-
-    def __init__(self,
-                 lambda_t1=1,
-                 lambda_t2=1,
-                 lambda_l1=1e4,
-                 lambda_l2=1e5,
-                 n_iter=10,
-                 optim='adam',
-                 lr=1e-4,
-                 init='zero',
-                 times_input=False,
-                 ):
-        super(RobustCASO, self).__init__(lambda_t1, lambda_t2,
-                                         lambda_l1, lambda_l2,
-                                         n_iter, optim, lr, init,
-                                         times_input)
-
-    def explain(self, model, x):
-        batch_size, n_chs, height, width = x.shape
-        x = Variable(x, requires_grad=True)
-        delta = self.initialize_delta(model, x)
-        if self.optim == 'sgd':
-            optimizer = torch.optim.SGD([delta], lr=self.lr, momentum=0.9)
-        elif self.optim == 'adam':
-            optimizer = torch.optim.Adam([delta], lr=self.lr)
-        self.history = defaultdict(list)
-        for i in range(self.n_iter):
-            output = model(x)
-            y = output.max(1)[1]
-            x_grad = self.get_input_grad(x, output, y, create_graph=True)
-            x_grad = x_grad.view((batch_size, n_chs, -1))
-            g = x_grad.clone()
-            g.detach()
-            hvp, = torch.autograd.grad(x_grad.dot(g).sum(), x,
-                                       create_graph=True)
-            hvp = hvp.view((batch_size, n_chs, -1))
-            t1 = x_grad.dot(delta).sum()
-            t2 = (delta - g / 2) * hvp
-            t2 = F.l1_loss(t2, torch.zeros_like(t2), reduce=False)
-            l1 = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
-            l2 = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
-
-            # t1 = t1.sum(2).sum(1) / (n_chs * height * width)
-            t2 = t2.sum(2).sum(1) / (n_chs * height * width)
-            l1 = l1.sum(2).sum(1) / (n_chs * height * width)
-            l2 = l2.sum(2).sum(1) / (n_chs * height * width)
-            # t1 = (self.lambda_t1 * t1).sum() / batch_size
-            t1 = self.lambda_t1 * t1
-            t2 = (self.lambda_t2 * t2).sum() / batch_size
-            l1 = (self.lambda_l1 * l1).sum() / batch_size
-            l2 = (self.lambda_l2 * l2).sum() / batch_size
-            loss = (
-                - t1
-                + t2
-                + l1
-                + l2
-            )
-            # log optimization
-            vmax = delta.abs().sum(1).max(1)[0]
-            vmin = delta.abs().sum(1).min(1)[0]
-            self.history['l1'].append(l1.data.cpu().numpy())
-            self.history['l2'].append(l2.data.cpu().numpy())
-            self.history['grad'].append(t1.data.cpu().numpy())
-            self.history['hessian'].append(t2.data.cpu().numpy())
-            self.history['vmax'].append(vmax.data.cpu().numpy())
-            self.history['vmin'].append(vmin.data.cpu().numpy())
-            # update delta
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-        delta = delta.view((batch_size, n_chs, height, width)).data
-        if self.times_input:
-            delta *= x.data
-        return delta
+# class RobustCASO(CASO):
+#
+#     '''
+#     + g^t Delta
+#     - \lambda_t2 |(\Delta-g/2)^t H g|
+#     - \lambda_l2 |\Delta|_2^2
+#     - \lambda_l1 |\Delta|_1
+#     '''
+#
+#     def __init__(self,
+#                  lambda_t1=1,
+#                  lambda_t2=1,
+#                  lambda_l1=1e4,
+#                  lambda_l2=1e5,
+#                  n_iter=10,
+#                  optim='adam',
+#                  lr=1e-4,
+#                  init='zero',
+#                  times_input=False,
+#                  ):
+#         super(RobustCASO, self).__init__(lambda_t1, lambda_t2,
+#                                          lambda_l1, lambda_l2,
+#                                          n_iter, optim, lr, init,
+#                                          times_input)
+#
+#     def explain(self, model, x):
+#         x.requires_grad_()
+#         batch_size, n_chs, height, width = x.shape
+#         delta = self.initialize_delta(model, x)
+#         if self.optim == 'sgd':
+#             optimizer = torch.optim.SGD([delta], lr=self.lr, momentum=0.9)
+#         elif self.optim == 'adam':
+#             optimizer = torch.optim.Adam([delta], lr=self.lr)
+#         self.history = defaultdict(list)
+#         for i in range(self.n_iter):
+#             output = model(x)
+#             y = output.max(1)[1]
+#             x_grad = self.get_input_grad(x, output, y, create_graph=True)
+#             x_grad = x_grad.view((batch_size, -1))
+#             g = x_grad.detach().clone()
+#             hvp, = torch.autograd.grad(x_grad.dot(g).sum(), x,
+#                                        create_graph=True)
+#             hvp = hvp.view((batch_size, -1))
+#             t1 = (x_grad * delta).sum()
+#             t2 = (delta - g / 2) * hvp
+#             t2 = F.l1_loss(t2, torch.zeros_like(t2), reduce=False)
+#             l1 = F.l1_loss(delta, torch.zeros_like(delta), reduce=False)
+#             l2 = F.mse_loss(delta, torch.zeros_like(delta), reduce=False)
+#             # t1 = t1.sum(2).sum(1) / (n_chs * height * width)
+#             t2 = t2.sum(2).sum(1) / (n_chs * height * width)
+#             l1 = l1.sum(2).sum(1) / (n_chs * height * width)
+#             l2 = l2.sum(2).sum(1) / (n_chs * height * width)
+#             # t1 = (self.lambda_t1 * t1).sum() / batch_size
+#             t1 = self.lambda_t1 * t1
+#             t2 = (self.lambda_t2 * t2).sum() / batch_size
+#             l1 = (self.lambda_l1 * l1).sum() / batch_size
+#             l2 = (self.lambda_l2 * l2).sum() / batch_size
+#             loss = (
+#                 - t1
+#                 + t2
+#                 + l1
+#                 + l2
+#             )
+#             # log optimization
+#             vmax = delta.abs().sum(1).max(1)[0]
+#             vmin = delta.abs().sum(1).min(1)[0]
+#             self.history['l1'].append(l1.data.cpu().numpy())
+#             self.history['l2'].append(l2.data.cpu().numpy())
+#             self.history['grad'].append(t1.data.cpu().numpy())
+#             self.history['hessian'].append(t2.data.cpu().numpy())
+#             self.history['vmax'].append(vmax.data.cpu().numpy())
+#             self.history['vmin'].append(vmin.data.cpu().numpy())
+#             # update delta
+#             optimizer.zero_grad()
+#             loss.backward()
+#             optimizer.step()
+#         delta = delta.view((batch_size, n_chs, height, width)).data
+#         if self.times_input:
+#             delta *= x.data
+#         return delta
 
 
-class IntegrateGradExplainer(Explainer):
+class IntegrateGrad(Explainer):
     '''Integrated gradient. The final input multiplication is optional.
 
     See https://arxiv.org/abs/1703.01365.
@@ -455,21 +362,20 @@ class IntegrateGradExplainer(Explainer):
         self.times_input = times_input
 
     def explain(self, model, x):
-        grad = 0
-        x_data = x.clone()
+        x.requires_grad_()
+        delta = 0
         for alpha in np.arange(1 / self.n_iter, 1.0, 1 / self.n_iter):
-            x_var = Variable(x_data * alpha, requires_grad=True)
-            output = model(x_var)
-            y = output.max(1)[1]
-            g = self.get_input_grad(x_var, output, y)
-            grad += g.data
+            logits = model(x * alpha)
+            y = logits.max(1)[1]
+            g = self.get_input_grad(x, logits, y) * alpha
+            delta += g.detach()
+        delta = delta / self.n_iter
         if self.times_input:
-            grad *= x_data
-        grad = grad / self.n_iter
-        return grad
+            delta *= x
+        return delta
 
 
-class SmoothGradExplainer:
+class SmoothGrad:
     '''
     See https://arxiv.org/abs/1706.03825.
     '''
@@ -477,7 +383,7 @@ class SmoothGradExplainer:
     def __init__(self, base_explainer=None, stdev_spread=0.15,
                  nsamples=25, magnitude=True, times_input=False):
         if base_explainer is None:
-            base_explainer = VanillaGradExplainer()
+            base_explainer = VanillaGrad()
         self.base_explainer = base_explainer
         self.stdev_spread = stdev_spread
         self.nsamples = nsamples
@@ -516,7 +422,7 @@ class SmoothCASO:
         for key in lambda_vectors:
             ls = [l[key] for l in lambdas]
             lambda_vectors[key] = Variable(torch.FloatTensor(ls).cuda())
-        exp = SmoothGradExplainer(CASO(**lambda_vectors))
+        exp = SmoothGrad(CASO(**lambda_vectors))
         return exp.explain(model, x)
 
 
@@ -526,7 +432,7 @@ class BatchTuner:
     hyperparameter setting.
     '''
 
-    def __init__(self, exp_cls=CASO,
+    def __init__(self, explainer_class=CASO,
                  n_steps=16, n_iter_search=3,
                  lambda_t1=None, lambda_t2=None,
                  lambda_l1=None, lambda_l2=None,
@@ -540,32 +446,29 @@ class BatchTuner:
                 Number of hyperparameters to search at each step.
             n_iter_search:
                 Number of iterations of search.
-            lambda_t1 (Variable(torch.cuda.FloatTensor) or float or None):
-                Search this hyperparameter if None.
-            lambda_t2 (Variable(torch.cuda.FloatTensor) or float or None):
-                Search this hyperparameter if None.
-            lambda_l1 (Variable(torch.cuda.FloatTensor) or float or None):
-                Search this hyperparameter if None.
-            lambda_l2 (Variable(torch.cuda.FloatTensor) or float or None):
-                Search this hyperparameter if None.
+            lambda_t1 (torch.cuda.FloatTensor or float or None):
+            lambda_t2 (torch.cuda.FloatTensor or float or None):
+            lambda_l1 (torch.cuda.FloatTensor or float or None):
+            lambda_l2 (torch.cuda.FloatTensor or float or None):
+                Search hyperparameter if None.
             n_iter, optim, lr, init, times_input:
                 Parameters for CASO.
         '''
-        self.sparse_args = {
+        self.caso_args = {
             'n_iter': n_iter,
             'optim': optim,
             'lr': lr,
             'init': init,
             'times_input': times_input,
         }
-        self.exp_cls = exp_cls
-        t1_lo = lambda_t1 if lambda_t1 else 1
-        t1_hi = lambda_t1 if lambda_t1 else 1
-        t2_lo = lambda_t2 if lambda_t2 else 1
-        t2_hi = lambda_t2 if lambda_t2 else 1
+        self.explainer_class = explainer_class
+
+        # turn of tuning by setting upper and lower bound to the same value
+        t1_lo = t1_hi = lambda_t1 if lambda_t1 else 1.
+        t2_lo = t2_hi = lambda_t2 if lambda_t2 else 1.
         l1_lo = lambda_l1 if lambda_l1 else 1e-1
         l1_hi = lambda_l1 if lambda_l1 else 2e5
-        l2_lo = lambda_l2 if lambda_l2 else 1
+        l2_lo = lambda_l2 if lambda_l2 else 1.
         l2_hi = lambda_l2 if lambda_l2 else 1e6
         self.tunables = OrderedDict({
             'lambda_t1': (t1_lo, t1_hi),
@@ -576,7 +479,7 @@ class BatchTuner:
         self.n_steps = n_steps
         self.n_iter_search = n_iter_search
 
-    def explain_one(self, model, x, quiet=True):
+    def explain_one(self, model, x, quiet=False):
         '''For one example, search for its best hyperparameters.'''
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
@@ -589,16 +492,17 @@ class BatchTuner:
             for param, (lo, hi) in tunables.items():
                 if lo == hi:
                     continue
-                ps = np.geomspace(lo, hi, self.n_steps)
-                args = self.sparse_args.copy()
+                ps = np.geomspace(lo, hi, self.n_steps, dtype=np.float32)
+                args = self.caso_args.copy()
                 args.update(best_lambdas)
-                args[param] = Variable(torch.FloatTensor(ps).cuda())
+                args[param] = torch.FloatTensor(ps[:, np.newaxis]).cuda()
                 model.zero_grad()
-                saliency = self.exp_cls(**args).explain(model, xx)
+                saliency = self.explainer_class(**args).explain(model, xx)
                 saliency = saliency.cpu().numpy()
                 s = viz.agg_clip(saliency)
                 medians = [viz.get_median_difference(x) for x in s]
                 best_idx = np.argmax(medians)
+                ps = ps.tolist()
                 best_lambdas[param] = ps[best_idx]
                 lo = ps[max(best_idx - 1, 0)]
                 hi = ps[min(best_idx + 1, len(ps) - 1)]
@@ -630,114 +534,82 @@ class BatchTuner:
             return saliency
 
 
-class LambdaTunerExplainer:
+class NewExplainer(Explainer):
 
-    def __init__(self, times_input=False):
-        self.times_input = times_input
+    def explain(self, model, x, y=None):
+        x_data = x.clone()
+        y_hat = model(x)
+        ws = []
+        for yh in y_hat[0]:
+            model.zero_grad()
+            x_grad, = torch.autograd.grad(yh, x, retain_graph=True)
+            ws.append(x_grad.data[0])
+        # classes, channel, height, width
+        model.zero_grad()
+        W = torch.stack(ws, -1)
+        n_chs, height, width, n_cls = W.shape
+        W = W.view(-1, n_cls)
 
-    def explain(self, model, x, get_lambdas=False, ):
-        input_data = x.clone()
+        y_prob = F.softmax(y_hat, 1).data  # 1, classes
 
-        best_median = 0
-        lambda_1 = 0
-        lambda_2 = 0
+        W = W.cpu()
+        y_prob = y_prob.cpu()
 
-        # get initial explanation
-        saliency = CASO(lambda_l1=lambda_1,
-                        lambda_l2=lambda_2).explain(model, x)
-        current_median_difference = viz.get_median_difference(
-            viz.agg_clip(saliency.cpu().numpy()))
-        print('lambda_1', lambda_1, 'lambda_2', lambda_2,
-              'current_median_difference', current_median_difference)
+        D = torch.diag(y_prob[0])
+        A = (D - y_prob.transpose(0, 1).mm(y_prob))
 
-        lambda_1 = 0.50  # Need to start at non-zero because 10*0 = 0
-        # also note these values are multiplied by 10 immediately
-        lambda_2 = 100
-        increase_rate = 2  # multiply each time
-        patience = 0.02
+        sigma_A, U_A = torch.symeig(A, eigenvectors=True)
 
-        # lambda_l1 search
-        while (current_median_difference >= best_median
-               or abs(current_median_difference - best_median) < patience):
-            best_median = max(current_median_difference, best_median)
-            if best_median > 0.945:  # return
-                saliency = CASO(
-                    lambda_l1=lambda_1, lambda_l2=lambda_2).explain(model, x)
-                current_median_difference = viz.get_median_difference(
-                    viz.agg_clip(saliency.cpu().numpy()))
-                print('Final Lambda_1', lambda_1,
-                      'Final_Lambda_2', lambda_2,
-                      'Final_Median', current_median_difference)
+        sigma_A_sqrt = torch.sqrt(sigma_A)
+        sigma_A_sqrt = torch.diag(sigma_A_sqrt)
+        B = W.mm(U_A)
+        B = B.mm(sigma_A_sqrt)
 
-                if self.times_input:
-                    saliency *= input_data
+        BTB = B.transpose(0, 1).mm(B)
+        sigma_B_sq, V_B = torch.symeig(BTB, eigenvectors=True)
+        rank = np.linalg.matrix_rank(BTB)
 
-                if get_lambdas:
-                    return saliency, lambda_1, lambda_2
-                else:
-                    return saliency
+        # reverse order of sigma
+        # inv_idx = torch.arange(sigma_B_sq.size(0)-1, -1, -1).long()
+        # sigma_B_sq = sigma_B_sq.index_select(0, inv_idx)
 
-            lambda_1 = lambda_1 * increase_rate
+        # print('rank', rank)
+        # zero out lower eigenvalues
+        for index in range(n_cls - rank):
+            sigma_B_sq[index] = 0.0
+            V_B[index] = 0.0
 
-            saliency = CASO(
-                lambda_l1=lambda_1,
-                lambda_l2=lambda_2).explain(model, x)
-            current_median_difference = viz.get_median_difference(
-                viz.agg_clip(saliency.cpu().numpy()))
-            print('lambda_1', lambda_1, 'lambda_2', lambda_2,
-                  'current_median_difference', current_median_difference)
+        # print('Our Method Eigenvalues', sigma_B_sq.numpy().tolist())
 
-        print("Done Tuning Lambda_L1")
-        # because current settings are one too far here
-        lambda_1 = lambda_1 / increase_rate
-        current_median_difference = best_median
+        sigma_B_inv = torch.rsqrt(sigma_B_sq)
 
-        while (current_median_difference >= best_median
-               or abs(current_median_difference - best_median) < patience):
-            best_median = max(current_median_difference, best_median)
-            if best_median > 0.945:  # return
-                saliency = CASO(
-                    lambda_l1=lambda_1, lambda_l2=lambda_2).explain(model, x)
-                current_median_difference = viz.get_median_difference(
-                    viz.agg_clip(saliency.cpu().numpy()))
-                print('Final Lambda_1', lambda_1,
-                      'Final_Lambda_2', lambda_2,
-                      'Final_Median', current_median_difference)
+        for index in range(n_cls - rank):
+            sigma_B_inv[index] = 0.0 # remove smallest eigenvectors because rank is c - 1
 
-                if self.times_input:
-                    saliency *= input_data
+        sigma_B_inv = torch.diag(sigma_B_inv)
 
-                if get_lambdas:
-                    return saliency, lambda_1, lambda_2
-                else:
-                    return saliency
+        HEV = V_B.mm(sigma_B_inv)
+        HEV = B.mm(HEV)
+        # print('Our Method Eigenvectors', HEV)
 
-            lambda_2 = lambda_2 * increase_rate
+        # inverse
+        recip = torch.reciprocal(sigma_B_sq)
+        for index in range(n_cls - rank):
+            recip[index] = 0.0 # remove smallest eigenvectors because rank is c - 1
 
-            saliency = CASO(
-                lambda_l1=lambda_1,
-                lambda_l2=lambda_2).explain(model, x)
-            current_median_difference = viz.get_median_difference(
-                viz.agg_clip(saliency.cpu().numpy()))
-            print('lambda_1', lambda_1, 'lambda_2', lambda_2,
-                  'current_median_difference', current_median_difference)
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y).cpu().data
+        x_grad = x_grad.view(-1, 1)
+        newtons = HEV.transpose(0, 1).mm(x_grad)
 
-        print("Done Tuning Lambda_L2")
-        # because current settings are one too far here
-        lambda_2 = lambda_2 / increase_rate
+        recip = torch.diag(torch.reciprocal(sigma_B_sq))
+        temp = HEV.mm(recip)
+        newtons = temp.mm(newtons)
 
-        saliency = CASO(
-            lambda_l1=lambda_1, lambda_l2=lambda_2).explain(model, x)
-        current_median_difference = viz.get_median_difference(
-            viz.agg_clip(saliency.cpu().numpy()))
-        print('Final Lambda_1', lambda_1,
-              'Final_Lambda_2', lambda_2,
-              'Final_Median', current_median_difference)
+        delta = -1 * newtons
+        batch_size = 1
+        delta = delta.view((batch_size, n_chs, height, width))
+        return delta
 
-        if self.times_input:
-            saliency *= input_data
 
-        if get_lambdas:
-            return saliency, lambda_1, lambda_2
-        else:
-            return saliency
