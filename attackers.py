@@ -72,16 +72,16 @@ class Attacker:
                                           create_graph=create_graph)
         return x_grad
 
-    def explain(self, model, x, saliency=None):
+    def attack(self, model, x, saliency=None):
         '''Generate adversarial perturbation for input x.
             Attackers share the general API with Explainers, except for some
             attacks which target specific saliency mapping.
         Args:
             model (torch.nn.Module):
-                The model to explain.
+                The model to attack.
             x (torch.cuda.FloatTensor):
                 Input tensor.
-            saliency (torch.cuda.LongTensor or None):
+            saliency (numpy.array or None):
                 Saliency with shape identical to x.
         Returns
             torch.cuda.FloatTensor:
@@ -93,7 +93,7 @@ class Attacker:
 class EmptyAttack(Attacker):
     '''Fake attack to return unperturbed input.'''
 
-    def explain(self, model, x, saliency=None):
+    def attack(self, model, x, saliency=None):
         return x
 
 
@@ -119,7 +119,7 @@ class GhorbaniAttack(Attacker):
         self.k = int(k)
         self.topk_agg = topk_agg
 
-    def explain(self, model, x, saliency=None):
+    def attack(self, model, x, saliency=None):
         '''Generate attack against specified saliency mapping.
             If saliency is not specified, assume vanila gradient saliency.
         '''
@@ -169,7 +169,7 @@ class ScaledNoiseAttack(Attacker):
     def __init__(self, epsilon=2 / 255):
         self.epsilon = epsilon
 
-    def explain(self, model, x, saliency=None):
+    def attack(self, model, x, saliency=None):
         x = x.cpu().numpy()
         noise = 2 * np.random.randint(2, size=x.shape) - 1
         noise = np.sign(noise) * self.epsilon
@@ -185,7 +185,7 @@ class FGSM(Attacker):
         self.epsilon = epsilon
         self.n_iter = n_iter
 
-    def explain(self, model, x, saliency=None):
+    def attack(self, model, x, saliency=None):
         batch_size, n_chs, height, width = x.shape
         step_size = self.epsilon / self.n_iter
         for i in range(self.n_iter):

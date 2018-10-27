@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import matplotlib.pylab as P
 
+
 def pil_loader(path):
     with open(path, 'rb') as f:
         with Image.open(f) as img:
@@ -106,3 +107,9 @@ def get_median_difference(saliency):
     top_median = np.median(s[topk])
     bot_median = np.median(s[botk])
     return top_median - bot_median
+
+
+def img_rev(img):
+    '''convert image array back to image space'''
+    img = np.array(img).swapaxes(0, 2).swapaxes(0, 1)
+    return np.uint8(img * 255)

@@ -479,7 +479,7 @@ class BatchTuner:
         self.n_steps = n_steps
         self.n_iter_search = n_iter_search
 
-    def explain_one(self, model, x, quiet=False):
+    def explain_one(self, model, x, quiet=True):
         '''For one example, search for its best hyperparameters.'''
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
@@ -503,6 +503,11 @@ class BatchTuner:
                 medians = [viz.get_median_difference(x) for x in s]
                 best_idx = np.argmax(medians)
                 ps = ps.tolist()
+                print()
+                print(i, param)
+                print(' '.join('{:.3f}'.format(x) for x in ps))
+                print(' '.join('{:.3f}'.format(x) for x in medians))
+                print()
                 best_lambdas[param] = ps[best_idx]
                 lo = ps[max(best_idx - 1, 0)]
                 hi = ps[min(best_idx + 1, len(ps) - 1)]

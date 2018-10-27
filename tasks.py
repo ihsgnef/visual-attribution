@@ -4,7 +4,6 @@ import glob
 import pickle
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 from scipy.stats import spearmanr
 from collections import defaultdict
 
@@ -18,6 +17,7 @@ from explainers import CASO, \
     BatchTuner, SmoothCASO, Eigenvalue, \
     NewExplainer, VATExplainer
 from attackers import EmptyAttack, GhorbaniAttack, ScaledNoiseAttack
+from imagenet1000_clsid_to_human import clsid_to_human
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -36,73 +36,6 @@ transf = transforms.Compose([
 #     ])
 
 
-def saliency_correlation(s1, s2):
-    # s1 and s2 are batched
-    assert s1.shape == s2.shape
-    assert s1.ndim == 4
-    batch_size = s1.shape[0]
-    s1 = viz.agg_clip(s1)
-    s2 = viz.agg_clip(s2)
-    s1 = s1.reshape(batch_size, -1)
-    s2 = s2.reshape(batch_size, -1)
-    return [spearmanr(x1, x2).correlation for x1, x2 in zip(s1, s2)]
-
-
-def saliency_overlap(s1, s2):
-    assert s1.shape == s2.shape
-    batch_size = s1.shape[0]
-    s1 = viz.agg_clip(s1)
-    s2 = viz.agg_clip(s2)
-    s1 = s1.reshape(batch_size, -1)
-    s2 = s2.reshape(batch_size, -1)
-    scores = []
-    K = 1000
-    for x1, x2 in zip(s1, s2):
-        x1 = set(np.argsort(-x1)[:K])
-        x2 = set(np.argsort(-x2)[:K])
-        scores.append(len(x1.intersection(x2)) / K)
-    return scores
-
-
-def get_prediction(model, batch, to_human=True):
-    from imagenet1000_clsid_to_human import clsid_to_human
-    ys = model(batch).max(1)[1].data
-    if to_human:
-        return [clsid_to_human[y] for y in ys.tolist()]
-    else:
-        return ys
-
-
-def attack_batch(model, batch, explainers, attackers,
-                 return_saliency=False):
-    results = []
-    batch_size = batch.shape[0]
-    for mth_name, explainer in explainers:
-        saliency_1 = explainer.explain(model, batch.clone()).cpu().numpy()
-        for atk_name, attacker in attackers:
-            perturbed = attacker.explain(model, batch.clone(), saliency_1)
-            perturbed_np = perturbed.cpu().numpy()
-            saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
-            # print(atk_name, mth_name, saliency_1.shape, saliency_2.shape)
-            scores = saliency_overlap(saliency_1, saliency_2)
-
-            for i in range(batch_size):
-                row = {
-                    'idx': i,
-                    'explainer': mth_name,
-                    'attacker': atk_name,
-                    'overlap': scores[i],
-                }
-                if return_saliency:
-                    row.update({
-                        'saliency_1': saliency_1[i],
-                        'saliency_2': saliency_2[i],
-                        'perturbed': perturbed_np[i],
-                    })
-                results.append(row)
-    return results
-
-
 def setup_imagenet(batch_size=16, example_ids=None,
                    n_batches=-1, n_examples=-1,
                    shuffle=True, dump_name=None,
@@ -116,8 +49,6 @@ def setup_imagenet(batch_size=16, example_ids=None,
     image_files = list(glob.iglob(image_path, recursive=True))
     image_files = sorted(image_files, key=lambda x: os.path.basename(x))
     real_ids = [os.path.basename(x) for x in image_files]
-
-    from imagenet1000_clsid_to_human import clsid_to_human
 
     label_path = '/fs/imageNet/imagenet/ILSVRC2012_devkit_t12/' \
                  + 'data/ILSVRC2012_validation_ground_truth.txt'
@@ -157,100 +88,52 @@ def setup_imagenet(batch_size=16, example_ids=None,
     batches = [examples[i: i + batch_size] for i in batch_indices]
     batches = map(batch_loader, batches)
     print('image loaded', len(batch_indices))
-    return model, batches
+    n_batches = len(batch_indices)
+    return model, batches, n_batches
 
 
-def run_attack_baselines(n_examples=4):
-    with open('ghorbani.json') as f:
-        example_ids = json.load(f)
-    example_ids = example_ids[:10]
-    n_examples = len(example_ids)
-    model, batches = setup_imagenet(batch_size=12, example_ids=example_ids)
-
-    attackers = [
-        ('Ghorbani', GhorbaniAttack()),
-        ('Random', ScaledNoiseAttack()),
-    ]
-
-    explainers = [
-        ('CASO', BatchTuner(CASO, n_steps=12)),
-        ('CASO-1', BatchTuner(CASO, n_steps=12, t2_lo=0, t2_hi=0)),
-        ('Gradient', VanillaGrad()),
-        ('SmoothGrad', SmoothGrad()),
-        ('IntegratedGrad', IntegrateGrad()),
-    ]
-    results = []
-    n_batches = int(n_examples / 16)
-    for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
-        ids, xs, ys = batch
-        xs = torch.stack([transf(x) for x in xs]).cuda()
-        rows = attack_batch(model, xs, explainers, attackers)
-        for i, row in enumerate(rows):
-            rows[i]['idx'] = ids[row['idx']]
-        results += rows
-    df = pd.DataFrame(results)
-    # df.to_pickle('ghorbani_1000_baselines.pkl')
-    df.drop(['idx'], axis=1)
-    print(df.groupby(['attacker', 'explainer']).mean())
+def saliency_correlation(s1, s2):
+    # s1 and s2 are batched
+    assert s1.shape == s2.shape
+    assert s1.ndim == 4
+    batch_size = s1.shape[0]
+    s1 = viz.agg_clip(s1)
+    s2 = viz.agg_clip(s2)
+    s1 = s1.reshape(batch_size, -1)
+    s2 = s2.reshape(batch_size, -1)
+    return [spearmanr(x1, x2).correlation for x1, x2 in zip(s1, s2)]
 
 
-def run_attack_tuner(n_examples=4):
-    with open('ghorbani.json') as f:
-        example_ids = json.load(f)
-    # example_ids = example_ids[:n_examples]
-    n_examples = len(example_ids)
-    model, batches = setup_imagenet(example_ids=example_ids)
-    attackers = [
-        ('Ghorbani', GhorbaniAttack()),
-        ('Random', ScaledNoiseAttack()),
-    ]
-    mth_name, explainer = ('CASO', BatchTuner(n_steps=12))
-    results = []
-    n_batches = int(n_examples / 16)
-    for batch_idx, batch in enumerate(tqdm(batches, total=n_batches)):
-        ids, xs, ys = batch
-        xs = torch.stack([transf(x) for x in xs]).cuda()
-        batch = xs
-        rows = []
-        batch_size = batch.shape[0]
-        saliency_1, l11, l21 = explainer.explain(model, batch.clone(),
-                                                 get_lambdas=True)
-        saliency_1 = saliency_1.cpu().numpy()
-        for atk_name, attacker in attackers:
-            perturbed = attacker.explain(model, batch.clone(), saliency_1)
-            perturbed_np = perturbed.cpu().numpy()
-            saliency_2, l12, l22 = explainer.explain(model, perturbed,
-                                                     get_lambdas=True)
-            saliency_2 = saliency_2.cpu().numpy()
-            scores = saliency_overlap(saliency_1, saliency_2)
-            for i in range(batch_size):
-                row = {
-                    'idx': i,
-                    'explainer': mth_name,
-                    'attacker': atk_name,
-                    'overlap': scores[i],
-                    'perturbed': perturbed_np,
-                    'l11': l11[i],
-                    'l21': l21[i],
-                    'l12': l12[i],
-                    'l22': l22[i],
-                }
-                rows.append(row)
-        for i, row in enumerate(rows):
-            rows[i]['idx'] = ids[row['idx']]
-        results += rows
-    df = pd.DataFrame(results)
-    df.to_pickle('ghorbani_1000_tuner.pkl')
-    df.drop(['idx'], axis=1)
-    print(df.groupby(['attacker', 'explainer']).mean())
+def saliency_overlap(s1, s2):
+    assert s1.shape == s2.shape
+    batch_size = s1.shape[0]
+    s1 = viz.agg_clip(s1)
+    s2 = viz.agg_clip(s2)
+    s1 = s1.reshape(batch_size, -1)
+    s2 = s2.reshape(batch_size, -1)
+    scores = []
+    K = 1000
+    for x1, x2 in zip(s1, s2):
+        x1 = set(np.argsort(-x1)[:K])
+        x2 = set(np.argsort(-x2)[:K])
+        scores.append(len(x1.intersection(x2)) / K)
+    return scores
+
+
+def get_prediction(model, batch, to_human=True):
+    ys = model(batch).max(1)[1].data
+    if to_human:
+        return [clsid_to_human[y] for y in ys.tolist()]
+    else:
+        return ys
 
 
 def plot_matrix(matrix, filename, fontsize=40, rects=[]):
     '''Each entry in the matrix should be a dictionary of:
-    image: an image ready to be plotted by imshow
-    cmap: color map or None
-    title: title
-    rotate_title: if True show on the left of the image
+        image: an image ready to be plotted by imshow
+        cmap: color map or None
+        text_top, text_bottom, text_left, text_right
+        rects: rectangles around box (i, j)
     '''
     n_rows = len(matrix)
     n_cols = len(matrix[0])
@@ -290,149 +173,132 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
     plt.close('all')
 
 
-def get_saliency_maps(model, batches, explainers):
-    results = defaultdict(dict)
-    all_images = dict()
-    all_labels = dict()
-    all_ids = []
+def explain(model, batches, explainers):
+    results = defaultdict(dict)     # saliency maps
+    all_images = dict()             # raw images
+    all_labels = dict()             # readable labels
+    all_ids = []                    # real ids
     for batch_idx, batch in enumerate(batches):
-        ids, images, labels = batch
+        real_ids, images, labels = batch
         xs = torch.stack([transf(x) for x in images]).cuda()
         ys = get_prediction(model, xs)
-        for i, (idx, img, lab) in enumerate(zip(ids, images, labels)):
-            all_images[idx] = img
-            all_labels[idx] = ys[i]
-            all_ids.append(idx)
+        for i, (id, img, lab) in enumerate(zip(real_ids, images, labels)):
+            all_images[id] = img
+            all_labels[id] = ys[i]
+            all_ids.append(id)
         for mth_name, explainer in explainers:
             saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
-            if hasattr(explainer, 'history'):
-                history = explainer.history
-            else:
-                history = None
             for i, s1 in enumerate(saliency_1):
-                idx = ids[i]
+                id = real_ids[i]
                 row = {
-                    'idx': idx,
+                    'id': id,
                     'explainer': mth_name,
                     'saliency_1': s1,
-                    'history': history,
                 }
-                results[idx][mth_name] = row
+                results[id][mth_name] = row
     return results, all_ids, all_images, all_labels
 
 
-def get_attack_saliency_maps(model, batches, explainers, attackers):
-    '''Collect saliency mappings.
-    Returns a dictionary keyed by the example ids, each entry has:
-    idx: example id (real id)
-    attacker: name of the attacker
-    explainer: name of the explainer
-    perturbed: perturbed input
-    saliency_1: saliency without perturbation
-    saliency_2: saliency with perturbation
+def explain_attack_explain(model, batches, explainers, attackers):
+    '''
+    Returns a dictionary keyed by the id
+        image: original input image
+        label: predicted label
+    The for each (explainer, attacker):
+        perturbed: perturbed input
+        saliency: saliency with perturbation
     '''
     results = defaultdict(dict)
-    all_images = dict()
-    all_labels = dict()
-    all_ids = []
     for batch_idx, batch in enumerate(batches):
         ids, images, labels = batch
-
         xs = torch.stack([transf(x) for x in images]).cuda()
         ys = get_prediction(model, xs)
-        rows = attack_batch(model, xs, explainers, attackers,
-                            return_saliency=True)
-        for i, (idx, img, lab) in enumerate(zip(ids, images, labels)):
-            all_images[idx] = img
-            all_labels[idx] = ys[i]
-            all_ids.append(idx)
-        for i, row in enumerate(rows):
-            row['idx'] = ids[row['idx']]
-            attacker = row['attacker']
-            explainer = row['explainer']
-            ptb = np.array(row['perturbed']).swapaxes(0, 2).swapaxes(0, 1)
-            row['perturbed'] = np.uint8(ptb * 255)
-            results[row['idx']][(attacker, explainer)] = row
-    return results, all_ids, all_images, all_labels
+        for explain_name, explainer in explainers:
+            saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
+            for attack_name, attacker in attackers:
+                perturbed = attacker.attack(model, xs.clone(), saliency_1)
+                perturbed_np = perturbed.cpu().numpy()
+                saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
+                overlap = saliency_overlap(saliency_1, saliency_2)
+                for i, (id, img, lab) in enumerate(zip(ids, images, labels)):
+                    results[id]['image'] = img
+                    results[id]['label'] = ys[i]
+                    results[id][(explain_name, attack_name)] = {
+                        'perturbed': perturbed_np[i],
+                        'saliency': saliency_2[i],
+                        'overlap': overlap[i],
+                    }
+    return results
 
 
-def plot_explainer_attacker(n_examples=3, agg_func=viz.agg_clip):
-    model, batches = setup_imagenet(batch_size=16, n_examples=n_examples)
+def plot_explainer_attacker(model, batches, attackers, explainers,
+                            per_example=True):
+    '''For each example, generate a matrix of plots:
+    rows are different inputs (original and perturbed)
+    columns are different explainers.
+    '''
+    if per_example:
+        os.makedirs('figures/explain_attack', exist_ok=True)
+    matrix = []
+    results = explain_attack_explain(model, batches, explainers, attackers)
+    results = sorted(results.items(), key=lambda x: x[0])
+    for id, example in results:
+        for i, (attack_name, _) in enumerate(attackers):
+            image_row = []
+            saliency_row = []
+            for j, (explain_name, _) in enumerate(explainers):
+                cell = example[(explain_name, attack_name)]
+                image = viz.img_rev(cell['perturbed'])
+                text_top = '{}\n{}'.format(explain_name, example['label'])
+                image_row.append({
+                    'image': image,
+                    'text_top': text_top,
+                    'text_left': attack_name,
+                })
+                saliency = viz.agg_clip(cell['saliency'])
+                med_diff = viz.get_median_difference(saliency)
+                text_top = '{:.3f}'.format(med_diff)
+                saliency_row.append({
+                    'image': saliency,
+                    'cmap': 'gray',
+                    'text_left': 'Saliency',
+                    'text_top': text_top,
+                })
+            matrix.append(image_row)
+            matrix.append(saliency_row)
+        if per_example:
+            plot_matrix(matrix, 'figures/explain_attack/{}.pdf'.format(id),
+                        fontsize=15)
+            matrix = []
+    if not per_example:
+        plot_matrix(matrix, 'figures/explain_attack.pdf'.format(id),
+                    fontsize=15)
 
+
+def task_explain_attack(n_examples=5):
+    model, batches, n_batches = setup_imagenet(batch_size=16,
+                                               n_examples=n_examples)
     attackers = [
-        ('Original', EmptyAttack()),  # empty attacker so perturbed = original
-        # ('Ghorbani', GhorbaniAttack()),
+        ('Original', EmptyAttack()),
+        ('Ghorbani', GhorbaniAttack()),
         ('Random', ScaledNoiseAttack()),
     ]
-
     explainers = [
-        # ('CASO-VAT', BatchTuner(CASO, n_steps=12, init='vat')),
-        # ('CASO', BatchTuner(CASO, n_steps=12)),
-        # ('CASO-1', BatchTuner(CASO, n_steps=12, t2_lo=0, t2_hi=0)),
-        # ('CASO-2', BatchTuner(CASO, n_steps=12, lambda_t1=0)),
-        ('SmoothCASO', SmoothCASO(n_steps=12)),
         ('Gradient', VanillaGrad()),
         ('SmoothGrad', SmoothGrad()),
-        # ('IntegratedGrad', IntegrateGrad()),
+        ('IntegratedGrad', IntegrateGrad()),
     ]
-
-    results, ids, images, labels = get_attack_saliency_maps(
-        model, batches, explainers, attackers)
-    assert len(results) == n_examples
-    df = []
-
-    # construct the matrix to be plotted
-    matrix = []
-    ids = sorted(ids)  # ordered by real ids
-    for idx in ids:
-        label = "``{}''".format(labels[idx])
-        for i, (attacker, _) in enumerate(attackers):
-            cell = results[idx][(attacker, explainers[0][0])]
-            # show label on top if empty attacker
-            # otherwise show attack name on the left
-            row = [{
-                    'image': cell['perturbed'],
-                    'title': label if i == 0 else attacker,
-                    'rotate_title': False if i == 0 else True,
-            }]
-            for explainer, _ in explainers:
-                # only show explainer label on top of the row of original
-                # example without perturbation
-                cell = results[idx][(attacker, explainer)]
-                s1 = agg_func(cell['saliency_1'])
-                s2 = agg_func(cell['saliency_2'])
-                s = s1 if i == 0 else s2
-                med_diff = viz.get_median_difference(s)
-                title = explainer + '\n' if i == 0 else ''
-                title += '{:.3f}'.format(med_diff)
-                row.append({
-                    'image': s,
-                    'cmap': 'gray',
-                    'text_top': title
-                })
-                df.append({
-                    'attacker': attacker,
-                    'explainer': explainer,
-                    'overlap': cell['overlap'],
-                })
-            matrix.append(row)
-    plot_matrix(matrix, 'figures/explainer_attacker.pdf', fontsize=15)
-    df = pd.DataFrame(df)
-    print(df.groupby(['attacker', 'explainer']).mean())
+    plot_explainer_attacker(model, batches, attackers, explainers)
 
 
-def plot_l1_l2(agg_func=viz.agg_clip):
-    with open('ghorbani.json') as f:
-        example_ids = json.load(f)
-    example_id = 3
-    example_ids = [example_ids[example_id]]
-    model, batches = setup_imagenet(batch_size=10, example_ids=example_ids)
-
+def plot_l1_l2():
+    '''Visualize CASO with different l1 and l2'''
+    model, batches, n_batches = setup_imagenet(batch_size=10,
+                                               example_ids=example_ids)
     attackers = [
         ('Original', EmptyAttack()),
         # ('Ghorbani', GhorbaniAttack()),
     ]
-
     n_steps = 16
     l1_lo, l1_hi = 0.01, 2e5
     l2_lo, l2_hi = 1e2, 1e8
@@ -485,7 +351,7 @@ def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
     explainers = []
     for l1 in l1s:
         explainers.append((l1, CASO(lambda_l1=l1)))
-    model, batches = setup_imagenet(n_examples=n_examples)
+    model, batches, n_batches = setup_imagenet(n_examples=n_examples)
     results, ids, images, labels = get_saliency_maps(
         model, batches, explainers)
     df_saliency, df_l1, df_idx = [], [], []
@@ -618,7 +484,7 @@ def plot_goose_2(model, batches, goose_id):
 
 def plot_goose():
     goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    model, batches = setup_imagenet(example_ids=[goose_id])
+    model, batches, n_batches = setup_imagenet(example_ids=[goose_id])
     batches = list(batches)
     plot_post_processing(model, batches, goose_id)
     plot_goose_2(model, batches, goose_id)
@@ -633,7 +499,7 @@ def plot_single(model, batches, example_id):
     ]
 
     explainers = [
-        ('CASO', BatchTuner(CASO)),
+        ('CASO', BatchTuner(CASO, lambda_l2=100)),
         # ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
         # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
         # ('Eigen', Eigenvalue()),
@@ -680,7 +546,8 @@ def plot_cherry_pick():
     example_ids = example_ids[40:100]
     # goose_id = 'ILSVRC2012_val_00045520.JPEG'
     # example_ids = [goose_id]
-    model, batches = setup_imagenet(batch_size=1, example_ids=example_ids)
+    model, batches, n_batches = setup_imagenet(batch_size=1,
+                                               example_ids=example_ids)
     batches = list(batches)
     for i, batch in enumerate(batches):
         eid = batch[0][0]
@@ -694,12 +561,6 @@ if __name__ == '__main__':
     parser.add_argument('--task', type=str)
     args = parser.parse_args()
     fs = {
-        'baselines': run_attack_baselines,
-        'tuner': run_attack_tuner,
-        'l1l2': plot_l1_l2,
-        'attacks': plot_explainer_attacker,
-        'histogram': plot_histogram_l1,
-        'goose': plot_goose,
-        'cherry': plot_cherry_pick,
+        'explain_attack': task_explain_attack,
     }
     fs[args.task]()
