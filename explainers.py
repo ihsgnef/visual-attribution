@@ -43,8 +43,8 @@ class Explainer:
             loss = F.cross_entropy(output, y)
             x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
         else:
-            grad_out = torch.zeros_like(output.data)
-            grad_out.scatter_(1, y.data.unsqueeze(0).t(), 1.0)
+            grad_out = torch.zeros_like(output)
+            grad_out.scatter_(1, y.unsqueeze(0).t(), 1.0)
             x_grad, = torch.autograd.grad(output, x,
                                           grad_outputs=grad_out,
                                           create_graph=create_graph)
@@ -81,7 +81,7 @@ class VanillaGrad(Explainer):
         x.requires_grad_()
         output = model(x)
         y = output.max(1)[1]
-        x_grad = self.get_input_grad(x, output, y).data
+        x_grad = self.get_input_grad(x, output, y)
         if self.times_input:
             x_grad *= x
         return x_grad.detach()
@@ -127,7 +127,7 @@ class VATExplainer:
             else:
                 adv_loss = F.cross_entropy(F.log_softmax(logits_hat), y)
             d_grad, = torch.autograd.grad(adv_loss, delta)
-            delta = _l2_normalize(d_grad.data)
+            delta = _l2_normalize(d_grad)
             delta.requires_grad_()
         if self.times_input:
             delta *= x
@@ -149,7 +149,7 @@ class Eigenvalue(Explainer):
             x_grad, = torch.autograd.grad(loss, x, create_graph=True)
             x_grad = x_grad.view(batch_size, -1)
             hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
-            hvp = hvp.data.view(batch_size, -1)
+            hvp = hvp.view(batch_size, -1).detach()
             ev = (delta * hvp).sum()
             delta = _l2_normalize(hvp).view(batch_size, -1)
             print('Power Method Eigenvalue Iteration',
@@ -219,7 +219,7 @@ class CASO(Explainer):
             delta = delta.sub(0.5).cuda()
             delta = _l2_normalize(delta)
         elif self.init == 'eig':
-            delta = VATExplainer().explain(model, x.data)
+            delta = VATExplainer().explain(model, x)
         delta = delta.view(batch_size, -1)
         delta = nn.Parameter(delta, requires_grad=True)
         return delta
@@ -255,19 +255,19 @@ class CASO(Explainer):
                 + l1
                 + l2
             )
-            # log optimization
-            self.history['l1'].append(l1.data.cpu().numpy())
-            self.history['l2'].append(l2.data.cpu().numpy())
-            self.history['grad'].append(t1.data.cpu().numpy())
-            self.history['hessian'].append(t2.data.cpu().numpy())
+            # # log optimization
+            # self.history['l1'].append(l1.data.cpu().numpy())
+            # self.history['l2'].append(l2.data.cpu().numpy())
+            # self.history['grad'].append(t1.data.cpu().numpy())
+            # self.history['hessian'].append(t2.data.cpu().numpy())
             # update delta
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-        delta = delta.view((batch_size, n_chs, height, width)).data
+        delta = delta.view((batch_size, n_chs, height, width))
         if self.times_input:
-            delta *= x.data
-        return delta
+            delta *= x
+        return delta.detach()
 
 
 # class RobustCASO(CASO):
@@ -616,5 +616,3 @@ class NewExplainer(Explainer):
         batch_size = 1
         delta = delta.view((batch_size, n_chs, height, width))
         return delta
-
-

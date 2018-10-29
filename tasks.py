@@ -136,7 +136,7 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
         rects: rectangles around box (i, j)
     '''
     n_rows = len(matrix)
-    n_cols = len(matrix[0])
+    n_cols = max(len(row) for row in matrix)
     plt.rc('text', usetex=True)
     f, ax = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 4 * n_rows))
     for i, row in enumerate(matrix):
@@ -174,32 +174,6 @@ def plot_matrix(matrix, filename, fontsize=40, rects=[]):
 
 
 def explain(model, batches, explainers):
-    results = defaultdict(dict)     # saliency maps
-    all_images = dict()             # raw images
-    all_labels = dict()             # readable labels
-    all_ids = []                    # real ids
-    for batch_idx, batch in enumerate(batches):
-        real_ids, images, labels = batch
-        xs = torch.stack([transf(x) for x in images]).cuda()
-        ys = get_prediction(model, xs)
-        for i, (id, img, lab) in enumerate(zip(real_ids, images, labels)):
-            all_images[id] = img
-            all_labels[id] = ys[i]
-            all_ids.append(id)
-        for mth_name, explainer in explainers:
-            saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
-            for i, s1 in enumerate(saliency_1):
-                id = real_ids[i]
-                row = {
-                    'id': id,
-                    'explainer': mth_name,
-                    'saliency_1': s1,
-                }
-                results[id][mth_name] = row
-    return results, all_ids, all_images, all_labels
-
-
-def explain_attack_explain(model, batches, explainers, attackers):
     '''
     Returns a dictionary keyed by the id
         image: original input image
@@ -215,135 +189,137 @@ def explain_attack_explain(model, batches, explainers, attackers):
         ys = get_prediction(model, xs)
         for explain_name, explainer in explainers:
             saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
+            for i, id in enumerate(ids):
+                results[id]['image'] = images[i]
+                results[id]['label'] = labels[i]
+                results[id]['prediction'] = ys[i]
+                results[id][explain_name] = {'saliency_1': saliency_1[i]}
+    return results
+
+
+def explain_attack_explain(model, batches, explainers, attackers):
+    '''
+    Returns a dictionary keyed by the id
+        image: original input image
+        label: predicted label
+    for each explainer:
+        saliency_1: saliency without perturbation
+        for each (explainer, attacker):
+            perturbed: perturbed input
+            saliency_2: saliency with perturbation
+            overlap: between saliency_1 and saliency_2
+    '''
+    results = defaultdict(dict)
+    for batch_idx, batch in enumerate(batches):
+        ids, images, labels = batch
+        xs = torch.stack([transf(x) for x in images]).cuda()
+        ys = get_prediction(model, xs)
+        for explain_name, explainer in explainers:
+            saliency_1 = explainer.explain(model, xs.clone()).cpu().numpy()
             for attack_name, attacker in attackers:
                 perturbed = attacker.attack(model, xs.clone(), saliency_1)
                 perturbed_np = perturbed.cpu().numpy()
                 saliency_2 = explainer.explain(model, perturbed).cpu().numpy()
                 overlap = saliency_overlap(saliency_1, saliency_2)
-                for i, (id, img, lab) in enumerate(zip(ids, images, labels)):
-                    results[id]['image'] = img
-                    results[id]['label'] = ys[i]
+                for i, id in enumerate(ids):
+                    results[id]['image'] = images[i]
+                    results[id]['label'] = labels[i]
+                    results[id]['prediction'] = ys[i]
+                    results[id][explain_name] = {'saliency_1': saliency_1[i]}
                     results[id][(explain_name, attack_name)] = {
                         'perturbed': perturbed_np[i],
-                        'saliency': saliency_2[i],
+                        'saliency_2': saliency_2[i],
                         'overlap': overlap[i],
                     }
     return results
 
 
-def plot_explainer_attacker(model, batches, attackers, explainers,
-                            per_example=True):
+def plot_explainer_attacker(model, batches, attackers, explainers):
     '''For each example, generate a matrix of plots:
     rows are different inputs (original and perturbed)
     columns are different explainers.
     '''
-    if per_example:
-        os.makedirs('figures/explain_attack', exist_ok=True)
+    os.makedirs('figures/explain_attack', exist_ok=True)
     matrix = []
     results = explain_attack_explain(model, batches, explainers, attackers)
     results = sorted(results.items(), key=lambda x: x[0])
     for id, example in results:
-        for i, (attack_name, _) in enumerate(attackers):
+        row = []
+        for explain_name, _ in explainers:
+            saliency_1 = viz.agg_clip(example[explain_name]['saliency_1'])
+            row.append({
+                'image': saliency_1,
+                'cmap': 'gray',
+                'text_top': explain_name,
+            })
+        matrix.append(row)
+        for attack_name, _ in attackers:
             image_row = []
             saliency_row = []
-            for j, (explain_name, _) in enumerate(explainers):
+            for explain_name, _ in explainers:
                 cell = example[(explain_name, attack_name)]
-                image = viz.img_rev(cell['perturbed'])
-                text_top = '{}\n{}'.format(explain_name, example['label'])
+                perturbed = viz.img_rev(cell['perturbed'])
                 image_row.append({
-                    'image': image,
-                    'text_top': text_top,
+                    'image': perturbed,
                     'text_left': attack_name,
                 })
-                saliency = viz.agg_clip(cell['saliency'])
-                med_diff = viz.get_median_difference(saliency)
+                saliency_2 = viz.agg_clip(cell['saliency_2'])
+                med_diff = viz.get_median_difference(saliency_2)
                 text_top = '{:.3f}'.format(med_diff)
                 saliency_row.append({
-                    'image': saliency,
+                    'image': saliency_2,
                     'cmap': 'gray',
                     'text_left': 'Saliency',
                     'text_top': text_top,
                 })
             matrix.append(image_row)
             matrix.append(saliency_row)
-        if per_example:
             plot_matrix(matrix, 'figures/explain_attack/{}.pdf'.format(id),
                         fontsize=15)
             matrix = []
-    if not per_example:
-        plot_matrix(matrix, 'figures/explain_attack.pdf'.format(id),
-                    fontsize=15)
 
 
-def task_explain_attack(n_examples=5):
-    model, batches, n_batches = setup_imagenet(batch_size=16,
-                                               n_examples=n_examples)
-    attackers = [
-        ('Original', EmptyAttack()),
-        ('Ghorbani', GhorbaniAttack()),
-        ('Random', ScaledNoiseAttack()),
-    ]
-    explainers = [
-        ('Gradient', VanillaGrad()),
-        ('SmoothGrad', SmoothGrad()),
-        ('IntegratedGrad', IntegrateGrad()),
-    ]
-    plot_explainer_attacker(model, batches, attackers, explainers)
-
-
-def plot_l1_l2():
+def task_l1_l2(n_examples=3):
     '''Visualize CASO with different l1 and l2'''
+    os.makedirs('figures/l1_l2', exist_ok=True)
     model, batches, n_batches = setup_imagenet(batch_size=10,
-                                               example_ids=example_ids)
-    attackers = [
-        ('Original', EmptyAttack()),
-        # ('Ghorbani', GhorbaniAttack()),
-    ]
+                                               n_examples=n_examples)
     n_steps = 16
     l1_lo, l1_hi = 0.01, 2e5
     l2_lo, l2_hi = 1e2, 1e8
-    l1s = np.geomspace(l1_lo, l1_hi, n_steps)
-    l2s = np.geomspace(l2_lo, l2_hi, n_steps)
+    l1s = np.geomspace(l1_lo, l1_hi, n_steps).tolist()
+    l2s = np.geomspace(l2_lo, l2_hi, n_steps).tolist()
 
     explainers = []
     for l1 in l1s:
-        # use the combination as name
         for l2 in l2s:
+            # use the combination as name
             explainers.append(
                 ((l1, l2), CASO(lambda_t2=0, lambda_l1=l1, lambda_l2=l2)))
 
-    results, ids, images, labels = get_attack_saliency_maps(
-        model, batches, explainers, attackers)
-    # results, ids, images, labels = get_saliency_maps(
-    #     model, batches, explainers)
-    resize = transforms.Resize((224, 224))
-    # construct the matrix to be plotted
     matrix = []
-    ids = sorted(ids)  # ordered by real ids
-    for idx in ids:
-        attacker = attackers[0][0]
-        image = resize(images[idx])
+    resize = transforms.Resize((224, 224))
+    results = explain(model, batches, explainers)
+    results = sorted(results.items(), key=lambda x: x[0])
+    for id, example in results:
+        image = resize(example['image'])
         for i, l2 in enumerate(l2s):
             row = [{
                 'image': image,
                 'text_left': 'l2={:.3f}'.format(l2),
             }]
             for l1 in l1s:
-                # only show explainer label on top of the row of original
-                # example without perturbation
-                cell = results[idx][(attacker, (l1, l2))]
-                # cell = results[idx][(l1, l2)]
-                saliency = agg_func(cell['saliency_2'])
+                saliency = viz.agg_clip(example[(l1, l2)]['saliency_2'])
                 med_diff = viz.get_median_difference(saliency)
-                title = 'l1={}\n'.format(l1) if i == 0 else ''
-                title += '{:.3f}'.format(med_diff)
+                text_top = 'l1={}\n'.format(l1) if i == 0 else ''
+                text_top += '{:.3f}'.format(med_diff)
                 row.append({
                     'image': saliency,
                     'cmap': 'gray',
-                    'text_top': title,
+                    'text_top': text_top,
                 })
             matrix.append(row)
-    plot_matrix(matrix, 'figures/l1_l2_{}.pdf'.format(example_id))
+    plot_matrix(matrix, 'figures/l1_l2/{}.pdf'.format(id))
 
 
 def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
@@ -555,6 +531,22 @@ def plot_cherry_pick():
         plot_single(model, [batch], eid)
 
 
+def task_explain_attack(n_examples=5):
+    model, batches, n_batches = setup_imagenet(batch_size=16,
+                                               n_examples=n_examples)
+    attackers = [
+        ('Original', EmptyAttack()),
+        ('Ghorbani', GhorbaniAttack()),
+        ('Random', ScaledNoiseAttack()),
+    ]
+    explainers = [
+        ('Gradient', VanillaGrad()),
+        ('SmoothGrad', SmoothGrad()),
+        ('IntegratedGrad', IntegrateGrad()),
+    ]
+    plot_explainer_attacker(model, batches, attackers, explainers)
+
+
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser()
@@ -562,5 +554,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
     fs = {
         'explain_attack': task_explain_attack,
+        'l1l2': task_l1_l2,
     }
     fs[args.task]()
