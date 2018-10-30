@@ -134,28 +134,25 @@ class VATExplainer:
         return delta.detach()
 
 
-class Eigenvalue(Explainer):
-
-    def explain(self, model, x):
-        x.requires_grad_()
-        batch_size, n_chs, height, width = x.shape
-        delta = torch.rand(batch_size, n_chs * height * width)
-        delta = _l2_normalize(delta.sub(0.5)).cuda()
-        for i in range(10):
-            model.zero_grad()
-            logits = model(x)
-            y = logits.max(1)[1]
-            loss = F.cross_entropy(logits, y)
-            x_grad, = torch.autograd.grad(loss, x, create_graph=True)
-            x_grad = x_grad.view(batch_size, -1)
-            hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
-            hvp = hvp.view(batch_size, -1).detach()
-            ev = (delta * hvp).sum()
-            delta = _l2_normalize(hvp).view(batch_size, -1)
-            print('Power Method Eigenvalue Iteration',
-                  '{}: {:.4f}'.format(i, ev.tolist()))
-        print()
-        return VanillaGrad().explain(model, x)
+def get_eigen_value(model, x, n_iter=10):
+    x.requires_grad_()
+    batch_size, n_chs, height, width = x.shape
+    delta = torch.rand(batch_size, n_chs * height * width)
+    delta = _l2_normalize(delta.sub(0.5)).cuda()
+    for i in range(n_iter):
+        model.zero_grad()
+        logits = model(x)
+        y = logits.max(1)[1]
+        loss = F.cross_entropy(logits, y)
+        x_grad, = torch.autograd.grad(loss, x, create_graph=True)
+        x_grad = x_grad.view(batch_size, -1)
+        hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
+        hvp = hvp.view(batch_size, -1).detach()
+        ev = (delta * hvp).sum(1)
+        delta = _l2_normalize(hvp)
+        # print('Power Method Eigenvalue Iteration',
+        #       '{}: {}'.format(i, ev.tolist()))
+    return ev, delta
 
 
 class CASO(Explainer):
@@ -167,7 +164,7 @@ class CASO(Explainer):
                  lambda_l2=1e5,
                  n_iter=10,
                  optim='adam',
-                 lr=1e-4,
+                 lr=1e-3,
                  init='zero',
                  times_input=False,
                  ):
@@ -251,10 +248,16 @@ class CASO(Explainer):
             l2 = (self.lambda_l2 * l2).sum() / x.nelement()
             loss = (
                 - t1
-                - t2
+                # - t2
                 + l1
-                + l2
+                # + l2
             )
+            print('{}\t{}\t{}\t{}'.format(
+                t1.detach().cpu().numpy(),
+                t2.detach().cpu().numpy(),
+                l1.detach().cpu().numpy(),
+                l2.detach().cpu().numpy(),
+            ))
             # # log optimization
             # self.history['l1'].append(l1.data.cpu().numpy())
             # self.history['l2'].append(l2.data.cpu().numpy())
@@ -264,6 +267,8 @@ class CASO(Explainer):
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+            delta = _l2_normalize(delta.detach())
+        print()
         delta = delta.view((batch_size, n_chs, height, width))
         if self.times_input:
             delta *= x
@@ -421,9 +426,62 @@ class SmoothCASO:
         lambda_vectors = {k: [] for k in lambdas[0].keys()}
         for key in lambda_vectors:
             ls = [l[key] for l in lambdas]
-            lambda_vectors[key] = Variable(torch.FloatTensor(ls).cuda())
+            lambda_vectors[key] = torch.FloatTensor(ls).cuda()
         exp = SmoothGrad(CASO(**lambda_vectors))
         return exp.explain(model, x)
+
+
+class EigenCASO(CASO):
+    '''Set lambda_l2 based on the largest eigenvalue of the input hessian'''
+    
+    def __init__(self,
+                 lambda_t1=1,
+                 lambda_t2=1,
+                 lambda_l1=1e4,
+                 lambda_l2=1e5,
+                 n_iter=10,
+                 optim='adam',
+                 lr=1e-4,
+                 init='zero',
+                 times_input=False,
+                 ):
+        super(EigenCASO, self).__init__(lambda_t1, lambda_t2,
+                                        lambda_l1, lambda_l2,
+                                        n_iter, optim, lr, init,
+                                        times_input)
+
+    def explain(self, model, x):
+        batch_size, n_chs, height, width = x.shape
+
+        ev, delta = get_eigen_value(model, x)
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y, create_graph=True)
+        x_grad = x_grad.view((batch_size, -1))
+        hvp_eigen, = torch.autograd.grad((x_grad * delta).sum(), x,
+                                         create_graph=True)
+        hvp_eigen = hvp_eigen.view((batch_size, -1))
+
+        model.zero_grad()
+        output = model(x)
+        y = output.max(1)[1]
+        x_grad = self.get_input_grad(x, output, y, create_graph=True)
+        x_grad = x_grad.view((batch_size, -1))
+        grad = _l2_normalize(x_grad.detach())
+        hvp_grad, = torch.autograd.grad((x_grad * grad).sum(), x,
+                                        create_graph=True)
+        hvp_grad = hvp_grad.view((batch_size, -1))
+
+        ev = ev.detach().cpu().numpy()
+        hvp_eigen = hvp_eigen.detach().cpu().numpy()
+        hvp_grad = hvp_grad.detach().cpu().numpy()
+
+        print('ev: {:.4f}\thvp_e: {:.4f}\thvp_g: {:.4f}'.format(
+            ev.tolist()[0], 
+            np.linalg.norm(hvp_eigen, 2).tolist(),
+            np.linalg.norm(hvp_grad, 2).tolist(),
+        ))
+        return VanillaGrad().explain(model, x)
 
 
 class BatchTuner:

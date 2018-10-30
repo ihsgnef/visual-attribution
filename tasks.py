@@ -4,6 +4,7 @@ import glob
 import pickle
 import numpy as np
 import pandas as pd
+from decimal import Decimal
 from scipy.stats import spearmanr
 from collections import defaultdict
 
@@ -14,7 +15,7 @@ import viz
 import utils
 from explainers import CASO, \
     VanillaGrad, IntegrateGrad, SmoothGrad, \
-    BatchTuner, SmoothCASO, Eigenvalue, \
+    BatchTuner, SmoothCASO, EigenCASO, \
     NewExplainer, VATExplainer
 from attackers import EmptyAttack, GhorbaniAttack, ScaledNoiseAttack
 from imagenet1000_clsid_to_human import clsid_to_human
@@ -232,6 +233,23 @@ def explain_attack_explain(model, batches, explainers, attackers):
     return results
 
 
+def plot_explainer(model, batches, n_batches, explainers,
+                   folder='figures/explain'):
+    os.makedirs(folder, exist_ok=True)
+    results = explain(model, batches, explainers)
+    for id, example in results.items():
+        image = transforms.Resize((224, 224))(example['image'])
+        row = [{'image': image}]
+        for explain_name, _ in explainers:
+            saliency_1 = viz.agg_clip(example[explain_name]['saliency_1'])
+            row.append({
+                'image': saliency_1,
+                'cmap': 'gray',
+                'text_top': explain_name,
+            })
+        plot_matrix([row], f'{folder}/{id}.pdf', fontsize=15)
+
+
 def plot_explainer_attacker(model, batches, n_batches, attackers, explainers,
                             folder='figures/explain_attack'):
     '''For each example, generate a matrix of plots:
@@ -315,17 +333,52 @@ def plot_post_processing(model, batches, n_batches,
         plot_matrix(matrix, f'{folder}/{id}.pdf')
 
 
-def plot_l1_l2(model, batches, n_batches, folder='figures/l1_l2'):
-    os.makedirs(folder, exist_ok=True)
-    # n_steps = 16
-    # l1_lo, l1_hi = 0.01, 2e5
-    # l2_lo, l2_hi = 1e2, 1e8
-    # l1s = np.geomspace(l1_lo, l1_hi, n_steps).tolist()
-    # l2s = np.geomspace(l2_lo, l2_hi, n_steps).tolist()
+def to_decimal(x):
+    x = '{:.0e}'.format(Decimal(x))
+    x = x.replace('e+', 'e^{')
+    x = x.replace('e-', 'e^{-') + '}'
+    return x
 
-    l1s = [1, 10, 50, 100, 200]
-    l2s = [1e2, 1e3, 1e4, 1e5, 1e6]
-    l2_tex = ['10^{}'.format(int(np.log10(x))) for x in l2s]
+
+def plot_steps(model, batches, n_batches, n_iters=None,
+               folder='figures/steps'):
+    os.makedirs(folder, exist_ok=True)
+    if n_iters is None:
+        n_iters = [1, 2, 3, 4, 5, 6]
+    explainers = []
+    for n in n_iters:
+        explainers.append(
+            (n, CASO(lambda_t2=0, n_iter=n)))
+    results = explain(model, batches, explainers)
+    for id, example in results.items():
+        image = transforms.Resize((224, 224))(example['image'])
+        row = [{'image': image}]
+        for n in n_iters:
+            # only show explainer label on top of the row of original
+            # example without perturbation
+            cell = example[n]
+            saliency = viz.agg_clip(cell['saliency_1'])
+            med_diff = viz.get_median_difference(saliency)
+            text_top = ''
+            row.append({
+                'image': saliency,
+                'cmap': 'gray',
+                'text_top': text_top,
+                'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
+            })
+        path = f'{folder}/{id}.pdf'
+        plot_matrix([row], path, fontsize=30)
+
+
+def plot_l1_l2(model, batches, n_batches, l1s=None, l2s=None,
+               folder='figures/l1_l2'):
+    os.makedirs(folder, exist_ok=True)
+    if l1s is None:
+        l1s = [1, 10, 50, 100, 200]
+    if l2s is None:
+        l2s = [1e2, 1e3, 1e4, 1e5, 1e6]
+    l1_tex = [to_decimal(x) for x in l1s]
+    l2_tex = [to_decimal(x) for x in l2s]
     explainers = []
     for l1 in l1s:
         # use the combination as name
@@ -347,7 +400,9 @@ def plot_l1_l2(model, batches, n_batches, folder='figures/l1_l2'):
                 cell = example[(l1, l2)]
                 saliency = viz.agg_clip(cell['saliency_1'])
                 med_diff = viz.get_median_difference(saliency)
-                text_top = r'$\lambda_1={}$'.format(l1) if i == 0 else ''
+                text_top = ''
+                if i == 0:
+                    text_top = r'$\lambda_1={}$'.format(l1_tex[j])
                 row.append({
                     'image': saliency,
                     'cmap': 'gray',
@@ -355,11 +410,10 @@ def plot_l1_l2(model, batches, n_batches, folder='figures/l1_l2'):
                     'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
                 })
                 if med_diff > best_median_diff:
-                    rect = (i, j)
+                    rect = (i, j + 1)
                     best_median_diff = med_diff
             matrix.append(row)
         path = f'{folder}/{id}.pdf'
-        print(path)
         plot_matrix(matrix, path, fontsize=30, rects=[rect])
 
 
@@ -369,6 +423,15 @@ def task_goose():
     plot_post_processing(model, batches, n_batches,
                          folder='figures/goose/post_processing')
     plot_l1_l2(model, batches, n_batches, folder='figures/goose/l1_l2')
+
+
+def task_explain():
+    model, batches, n_batches = setup_imagenet(batch_size=1, n_examples=40)
+    explainers = [
+        ('Grad', VanillaGrad()),
+        ('EigenCASO', EigenCASO(lambda_t2=0, lambda_l1=1, lambda_l2=0, lr=1e-3)),
+    ]
+    plot_explainer(model, batches, n_batches, explainers)
 
 
 def task_explain_attack():
@@ -388,7 +451,17 @@ def task_explain_attack():
 
 def task_l1_l2():
     model, batches, n_batches = setup_imagenet(n_examples=16)
-    plot_l1_l2(model, batches, n_batches)
+    n_steps = 16
+    l1_lo, l1_hi = 0.01, 2e5
+    l2_lo, l2_hi = 1e2, 1e8
+    l1s = np.geomspace(l1_lo, l1_hi, n_steps).tolist()
+    l2s = np.geomspace(l2_lo, l2_hi, n_steps).tolist()
+    plot_l1_l2(model, batches, n_batches, l1s=l1s, l2s=[10])
+
+
+def task_steps():
+    model, batches, n_batches = setup_imagenet(n_examples=16)
+    plot_steps(model, batches, n_batches)
 
 
 if __name__ == '__main__':
@@ -398,7 +471,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     fs = {
         'goose': task_goose,
+        'explain': task_explain,
         'explain_attack': task_explain_attack,
         'l1l2': task_l1_l2,
+        'steps': task_steps,
     }
     fs[args.task]()
