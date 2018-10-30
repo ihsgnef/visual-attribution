@@ -38,7 +38,7 @@ transf = transforms.Compose([
 
 def setup_imagenet(batch_size=16, example_ids=None,
                    n_batches=-1, n_examples=-1,
-                   shuffle=True, dump_name=None,
+                   shuffle=True, dump_filenames=None,
                    arch='resnet50'):
     model = utils.load_model(arch)
     model.eval()
@@ -70,14 +70,12 @@ def setup_imagenet(batch_size=16, example_ids=None,
         examples = examples[:n_examples]
     elif n_batches > 0:
         examples = examples[:batch_size * n_batches]
-    else:
-        print('using all images')
 
     selected_files = sorted([x[0] for x in examples])
-    if dump_name is not None:
-        with open(dump_name, 'w') as f:
+    if dump_filenames is not None:
+        with open(dump_filenames, 'w') as f:
             f.write(json.dumps(selected_files))
-    print('\n'.join(selected_files))
+    # print('\n'.join(selected_files))
 
     def batch_loader(batch):
         batch = list(map(list, zip(*batch)))
@@ -87,8 +85,8 @@ def setup_imagenet(batch_size=16, example_ids=None,
     batch_indices = list(range(0, len(examples), batch_size))
     batches = [examples[i: i + batch_size] for i in batch_indices]
     batches = map(batch_loader, batches)
-    print('image loaded', len(batch_indices))
     n_batches = len(batch_indices)
+    print(n_batches, 'batches', n_batches * batch_size, 'images loaded')
     return model, batches, n_batches
 
 
@@ -234,16 +232,15 @@ def explain_attack_explain(model, batches, explainers, attackers):
     return results
 
 
-def plot_explainer_attacker(model, batches, attackers, explainers):
+def plot_explainer_attacker(model, batches, n_batches, attackers, explainers,
+                            folder='figures/explain_attack'):
     '''For each example, generate a matrix of plots:
     rows are different inputs (original and perturbed)
     columns are different explainers.
     '''
-    os.makedirs('figures/explain_attack', exist_ok=True)
-    matrix = []
+    os.makedirs(folder, exist_ok=True)
     results = explain_attack_explain(model, batches, explainers, attackers)
-    results = sorted(results.items(), key=lambda x: x[0])
-    for id, example in results:
+    for id, example in results.items():
         row = []
         for explain_name, _ in explainers:
             saliency_1 = viz.agg_clip(example[explain_name]['saliency_1'])
@@ -252,7 +249,7 @@ def plot_explainer_attacker(model, batches, attackers, explainers):
                 'cmap': 'gray',
                 'text_top': explain_name,
             })
-        matrix.append(row)
+        matrix = [row]
         for attack_name, _ in attackers:
             image_row = []
             saliency_row = []
@@ -274,266 +271,108 @@ def plot_explainer_attacker(model, batches, attackers, explainers):
                 })
             matrix.append(image_row)
             matrix.append(saliency_row)
-            plot_matrix(matrix, 'figures/explain_attack/{}.pdf'.format(id),
-                        fontsize=15)
-            matrix = []
+            plot_matrix(matrix, f'{folder}/{id}.pdf', fontsize=15)
 
 
-def task_l1_l2(n_examples=3):
-    '''Visualize CASO with different l1 and l2'''
-    os.makedirs('figures/l1_l2', exist_ok=True)
-    model, batches, n_batches = setup_imagenet(batch_size=10,
-                                               n_examples=n_examples)
-    n_steps = 16
-    l1_lo, l1_hi = 0.01, 2e5
-    l2_lo, l2_hi = 1e2, 1e8
-    l1s = np.geomspace(l1_lo, l1_hi, n_steps).tolist()
-    l2s = np.geomspace(l2_lo, l2_hi, n_steps).tolist()
-
-    explainers = []
-    for l1 in l1s:
-        for l2 in l2s:
-            # use the combination as name
-            explainers.append(
-                ((l1, l2), CASO(lambda_t2=0, lambda_l1=l1, lambda_l2=l2)))
-
-    matrix = []
-    resize = transforms.Resize((224, 224))
-    results = explain(model, batches, explainers)
-    results = sorted(results.items(), key=lambda x: x[0])
-    for id, example in results:
-        image = resize(example['image'])
-        for i, l2 in enumerate(l2s):
-            row = [{
-                'image': image,
-                'text_left': 'l2={:.3f}'.format(l2),
-            }]
-            for l1 in l1s:
-                saliency = viz.agg_clip(example[(l1, l2)]['saliency_2'])
-                med_diff = viz.get_median_difference(saliency)
-                text_top = 'l1={}\n'.format(l1) if i == 0 else ''
-                text_top += '{:.3f}'.format(med_diff)
-                row.append({
-                    'image': saliency,
-                    'cmap': 'gray',
-                    'text_top': text_top,
-                })
-            matrix.append(row)
-    plot_matrix(matrix, 'figures/l1_l2/{}.pdf'.format(id))
-
-
-def plot_histogram_l1(n_examples=4, agg_func=viz.agg_clip):
-    l1s = [0, 0.1, 0.5, 1, 10, 100]
-    explainers = []
-    for l1 in l1s:
-        explainers.append((l1, CASO(lambda_l1=l1)))
-    model, batches, n_batches = setup_imagenet(n_examples=n_examples)
-    results, ids, images, labels = get_saliency_maps(
-        model, batches, explainers)
-    df_saliency, df_l1, df_idx = [], [], []
-    for idx in ids:
-        for l1 in l1s:
-            s = agg_func(results[idx][l1]['saliency_1'])
-            s = s.ravel().tolist()
-            df_saliency += s
-            df_l1 += [l1 for _ in range(len(s))]
-            df_idx += [idx for _ in range(len(s))]
-
-    df = pd.DataFrame({'saliency': df_saliency,
-                       'l1': df_l1,
-                       'example': df_idx})
-
-    with open('histogram_l1.pkl', 'wb') as f:
-        pickle.dump(df, f)
-
-
-def plot_post_processing(model, batches, example_id):
+def plot_post_processing(model, batches, n_batches,
+                         folder='figures/post_processing'):
     '''Single image saliency mapping with four different post-processing
         methods.
     '''
+    os.makedirs(folder, exist_ok=True)
     explainers = [
-        ('CASO', BatchTuner(CASO, n_steps=12)),
-        ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
-        # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
+        ('CASO', CASO()),
+        ('CAFO', CASO(lambda_t2=0)),
         ('Gradient', VanillaGrad()),
-        # ('SmoothGrad', SmoothGrad()),
-        # ('CASO-E', Eigenvalue()),
-        # ('IntegratedGrad', IntegrateGrad()),
     ]
-    results, ids, images, labels = get_saliency_maps(
-        model, batches, explainers)
-
-    results = results[example_id]
-    image_input = transf(images[example_id]).numpy()
-    raw_image = transforms.Resize((224, 224))(images[example_id])
-    plt.rc('text', usetex=True)
-    col0 = [
-        {'image': raw_image, 'text_left': r'$\Delta$'},
-        {'image': raw_image, 'text_left': r'clip$(\Delta)$'},
-        {'image': raw_image, 'text_left': r'$\Delta\odot x$'},
-        {'image': raw_image, 'text_left': r'clip$(\Delta\odot x)$'},
-    ]
-    col0 += [{'image': raw_image} for _ in range(3)]
-    matrix = [col0]
-    for mth_name, _ in explainers:
-        col = []
-        saliency = results[mth_name]['saliency_1']
-        saliency_0 = viz.agg_default(saliency)
-        saliency_1 = viz.agg_clip(saliency)
-        saliency_2 = viz.agg_default(saliency * image_input)
-        saliency_3 = viz.agg_clip(saliency * image_input)
-        col.append({'image': saliency_0, 'cmap': 'gray', 'text_top': mth_name})
-        col.append({'image': saliency_1, 'cmap': 'gray'})
-        col.append({'image': saliency_2, 'cmap': 'gray'})
-        col.append({'image': saliency_3, 'cmap': 'gray'})
-        matrix.append(col)
-    matrix = list(map(list, zip(*matrix)))
-    plot_matrix(matrix, 'figures/goose_1_{}.pdf'.format(example_id))
-    print('done', example_id)
+    results = explain(model, batches, explainers)
+    for id, example in results.items():
+        raw_image = transforms.Resize((224, 224))(example['image'])
+        image_input = transf(example['image']).numpy()
+        plt.rc('text', usetex=True)
+        col0 = [
+            {'image': raw_image, 'text_left': r'$\Delta$'},
+            {'image': raw_image, 'text_left': r'clip$(\Delta)$'},
+            {'image': raw_image, 'text_left': r'$\Delta\odot x$'},
+            {'image': raw_image, 'text_left': r'clip$(\Delta\odot x)$'},
+        ]
+        col0 += [{'image': raw_image} for _ in range(3)]
+        matrix = [col0]
+        for mth_name, _ in explainers:
+            col = []
+            saliency = example[mth_name]['saliency_1']
+            saliency_0 = viz.agg_default(saliency)
+            saliency_1 = viz.agg_clip(saliency)
+            saliency_2 = viz.agg_default(saliency * image_input)
+            saliency_3 = viz.agg_clip(saliency * image_input)
+            col.append({'image': saliency_0, 'cmap': 'gray',
+                        'text_top': mth_name})
+            col.append({'image': saliency_1, 'cmap': 'gray'})
+            col.append({'image': saliency_2, 'cmap': 'gray'})
+            col.append({'image': saliency_3, 'cmap': 'gray'})
+            matrix.append(col)
+        matrix = list(map(list, zip(*matrix)))
+        plot_matrix(matrix, f'{folder}/{id}.pdf')
 
 
-def plot_goose_2_full(model, batches, goose_id):
+def plot_l1_l2(model, batches, n_batches, folder='figures/l1_l2'):
+    os.makedirs(folder, exist_ok=True)
+    # n_steps = 16
+    # l1_lo, l1_hi = 0.01, 2e5
+    # l2_lo, l2_hi = 1e2, 1e8
+    # l1s = np.geomspace(l1_lo, l1_hi, n_steps).tolist()
+    # l2s = np.geomspace(l2_lo, l2_hi, n_steps).tolist()
+
     l1s = [1, 10, 50, 100, 200]
     l2s = [1e2, 1e3, 1e4, 1e5, 1e6]
-    l2_tex = ['10^2', '10^3', '10^4', '10^5', '10^6']
+    l2_tex = ['10^{}'.format(int(np.log10(x))) for x in l2s]
     explainers = []
     for l1 in l1s:
         # use the combination as name
         for l2 in l2s:
             explainers.append(
-                ((l1, l2), CASO(
-                    lambda_l1=l1, lambda_l2=l2)))
-    results, ids, images, labels = get_saliency_maps(
-        model, batches, explainers)
-    matrix = []
-    image = transforms.Resize((224, 224))(images[goose_id])
-    for i, l2 in enumerate(l2s):
-        row = [{'image': image,
-                'text_left': r'$\lambda_2={}$'.format(l2_tex[i])}]
-        for l1 in l1s:
-            # only show explainer label on top of the row of original
-            # example without perturbation
-            cell = results[goose_id][(l1, l2)]
-            saliency = viz.agg_clip(cell['saliency_1'])
-            med_diff = viz.get_median_difference(saliency)
-            title = r'$\lambda_1={}$'.format(l1) if i == 0 else ''
-            row.append({
-                'image': saliency,
-                'cmap': 'gray',
-                'text_top': title,
-                'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
-            })
-        matrix.append(row)
-    plot_matrix(matrix, 'figures/goose_2_full.pdf', fontsize=30,
-                rects=[(2, 4)])
+                ((l1, l2), CASO(lambda_l1=l1, lambda_l2=l2)))
+    results = explain(model, batches, explainers)
+    rect = (0, 0)
+    best_median_diff = 0
+    for id, example in results.items():
+        matrix = []
+        image = transforms.Resize((224, 224))(example['image'])
+        for i, l2 in enumerate(l2s):
+            row = [{'image': image,
+                    'text_left': r'$\lambda_2={}$'.format(l2_tex[i])}]
+            for j, l1 in enumerate(l1s):
+                # only show explainer label on top of the row of original
+                # example without perturbation
+                cell = example[(l1, l2)]
+                saliency = viz.agg_clip(cell['saliency_1'])
+                med_diff = viz.get_median_difference(saliency)
+                text_top = r'$\lambda_1={}$'.format(l1) if i == 0 else ''
+                row.append({
+                    'image': saliency,
+                    'cmap': 'gray',
+                    'text_top': text_top,
+                    'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
+                })
+                if med_diff > best_median_diff:
+                    rect = (i, j)
+                    best_median_diff = med_diff
+            matrix.append(row)
+        path = f'{folder}/{id}.pdf'
+        print(path)
+        plot_matrix(matrix, path, fontsize=30, rects=[rect])
 
 
-def plot_goose_2(model, batches, goose_id):
-    l1s = [1, 10, 50, 100, 200]
-    l2 = 1e4
-    explainers = []
-    for l1 in l1s:
-        explainers.append((l1, CASO(
-            lambda_l1=l1, lambda_l2=l2)))
-    results, ids, images, labels = get_saliency_maps(
-        model, batches, explainers)
-    resize = transforms.Resize((224, 224))
-    image = resize(images[goose_id])
-    row = [{
-        'image': image,
-        'text_left': r'$\lambda_2=10^4$',
-    }]
-    for l1 in l1s:
-        cell = results[goose_id][l1]
-        saliency = viz.agg_clip(cell['saliency_1'])
-        med_diff = viz.get_median_difference(saliency)
-        row.append({
-            'image': saliency,
-            'cmap': 'gray',
-            'text_top': r'$\lambda_1={}$'.format(l1),
-            'text_bottom': r'$\eta={:.3f}$'.format(med_diff),
-        })
-    matrix = [row]
-    plot_matrix(matrix, 'figures/goose_2.pdf', fontsize=30,
-                rects=[(1, 4)])
-
-
-def plot_goose():
+def task_goose():
     goose_id = 'ILSVRC2012_val_00045520.JPEG'
     model, batches, n_batches = setup_imagenet(example_ids=[goose_id])
-    batches = list(batches)
-    plot_post_processing(model, batches, goose_id)
-    plot_goose_2(model, batches, goose_id)
-    plot_goose_2_full(model, batches, goose_id)
+    plot_post_processing(model, batches, n_batches,
+                         folder='figures/goose/post_processing')
+    plot_l1_l2(model, batches, n_batches, folder='figures/goose/l1_l2')
 
 
-def plot_single(model, batches, example_id):
-    attackers = [
-        ('Original', EmptyAttack()),
-        # ('Random', ScaledNoiseAttack()),
-        # ('Ghorbani', GhorbaniAttack()),
-    ]
-
-    explainers = [
-        ('CASO', BatchTuner(CASO, lambda_l2=100)),
-        # ('CAFO', BatchTuner(CASO, lambda_t2=0, n_steps=12)),
-        # ('SmoothCAFO', SmoothCASO(lambda_t2=0, n_steps=12)),
-        # ('Eigen', Eigenvalue()),
-        # ('Gradient', VanillaGrad()),
-        # ('SmoothGrad', SmoothGrad()),
-        # ('CASO-E', Eigenvalue()),
-        # ('IntegratedGrad', IntegrateGrad()),
-        # ('Eigen', Eigenvalue()),
-        # ('New', NewExplainer()),
-    ]
-    results, ids, images, labels = get_attack_saliency_maps(
-        model, batches, explainers, attackers)
-    results = results[example_id]
-    # construct the matrix to be plotted
-    matrix = []
-    label = "``{}''".format(labels[example_id])
-    for i, (attacker, _) in enumerate(attackers):
-        cell = results[(attacker, explainers[0][0])]
-        row = [{
-                'image': cell['perturbed'],
-                'text_top': label if i == 0 else '',
-                'text_left': attacker,
-        }]
-        for explainer, _ in explainers:
-            cell = results[(attacker, explainer)]
-            s1 = viz.agg_clip(cell['saliency_1'])
-            s2 = viz.agg_clip(cell['saliency_2'])
-            s = s1 if i == 0 else s2
-            med_diff = viz.get_median_difference(s)
-            row.append({
-                'image': s,
-                'cmap': 'gray',
-                'text_top': explainer if i == 0 else '',
-                'text_bottom': r'{:.3f}'.format(med_diff)
-            })
-        matrix.append(row)
-    plot_matrix(matrix, 'figures/single_{}.pdf'.format(example_id))
-    print('done', example_id)
-
-
-def plot_cherry_pick():
-    with open('ghorbani.json') as f:
-        example_ids = json.load(f)
-    example_ids = example_ids[40:100]
-    # goose_id = 'ILSVRC2012_val_00045520.JPEG'
-    # example_ids = [goose_id]
-    model, batches, n_batches = setup_imagenet(batch_size=1,
-                                               example_ids=example_ids)
-    batches = list(batches)
-    for i, batch in enumerate(batches):
-        eid = batch[0][0]
-        print(i, eid)
-        plot_single(model, [batch], eid)
-
-
-def task_explain_attack(n_examples=5):
-    model, batches, n_batches = setup_imagenet(batch_size=16,
-                                               n_examples=n_examples)
+def task_explain_attack():
+    model, batches, n_batches = setup_imagenet(batch_size=16, n_examples=5)
     attackers = [
         ('Original', EmptyAttack()),
         ('Ghorbani', GhorbaniAttack()),
@@ -544,7 +383,12 @@ def task_explain_attack(n_examples=5):
         ('SmoothGrad', SmoothGrad()),
         ('IntegratedGrad', IntegrateGrad()),
     ]
-    plot_explainer_attacker(model, batches, attackers, explainers)
+    plot_explainer_attacker(model, batches, n_batches, attackers, explainers)
+
+
+def task_l1_l2():
+    model, batches, n_batches = setup_imagenet(n_examples=16)
+    plot_l1_l2(model, batches, n_batches)
 
 
 if __name__ == '__main__':
@@ -553,6 +397,7 @@ if __name__ == '__main__':
     parser.add_argument('--task', type=str)
     args = parser.parse_args()
     fs = {
+        'goose': task_goose,
         'explain_attack': task_explain_attack,
         'l1l2': task_l1_l2,
     }
