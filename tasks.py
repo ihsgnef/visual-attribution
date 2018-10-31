@@ -377,14 +377,12 @@ def plot_l1_l2(model, batches, n_batches, l1s=None, l2s=None,
         l1s = [1, 10, 50, 100, 200]
     if l2s is None:
         l2s = [1e2, 1e3, 1e4, 1e5, 1e6]
-    l1_tex = [to_decimal(x) for x in l1s]
-    l2_tex = [to_decimal(x) for x in l2s]
     explainers = []
     for l1 in l1s:
         # use the combination as name
         for l2 in l2s:
             explainers.append(
-                ((l1, l2), CASO(lambda_l1=l1, lambda_l2=l2)))
+                ((l1, l2), EigenCASO(lambda_l1=l1, lambda_l2=l2, init='eig')))
     results = explain(model, batches, explainers)
     rect = (0, 0)
     best_median_diff = 0
@@ -392,8 +390,8 @@ def plot_l1_l2(model, batches, n_batches, l1s=None, l2s=None,
         matrix = []
         image = transforms.Resize((224, 224))(example['image'])
         for i, l2 in enumerate(l2s):
-            row = [{'image': image,
-                    'text_left': r'$\lambda_2={}$'.format(l2_tex[i])}]
+            text_left = r'$\lambda_2={}$'.format(to_decimal(l2))
+            row = [{'image': image, 'text_left': text_left}]
             for j, l1 in enumerate(l1s):
                 # only show explainer label on top of the row of original
                 # example without perturbation
@@ -402,7 +400,7 @@ def plot_l1_l2(model, batches, n_batches, l1s=None, l2s=None,
                 med_diff = viz.get_median_difference(saliency)
                 text_top = ''
                 if i == 0:
-                    text_top = r'$\lambda_1={}$'.format(l1_tex[j])
+                    text_top = r'$\lambda_1={}$'.format(to_decimal(l1))
                 row.append({
                     'image': saliency,
                     'cmap': 'gray',
@@ -429,7 +427,7 @@ def task_explain():
     model, batches, n_batches = setup_imagenet(batch_size=1, n_examples=40)
     explainers = [
         ('Grad', VanillaGrad()),
-        ('EigenCASO', EigenCASO(lambda_t2=0, lambda_l1=1, lambda_l2=0, lr=1e-3)),
+        ('EigenCASO', EigenCASO(lambda_l1=0, n_iter=60)),
     ]
     plot_explainer(model, batches, n_batches, explainers)
 
