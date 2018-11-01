@@ -471,7 +471,7 @@ class Spectrum:
         hvp_grad = hvp_grad.detach().cpu().numpy()
         hvp_rand = hvp_rand.detach().cpu().numpy()
 
-        print('---------')
+        print('+++++++++')
         print('ev {:.4f}\nhvp_e {:.4f}\nhvp_g {:.4f}\nhvp_r {:.4f}'.format(
             evalue.tolist()[0],
             np.linalg.norm(hvp_eigen, 2).tolist(),
@@ -502,7 +502,14 @@ class Spectrum:
             all_new_hvp_eigen.append(np.linalg.norm(new_hvp_eigen, 2).tolist())
             all_new_hvp_grad.append(np.linalg.norm(new_hvp_grad, 2).tolist())
 
-        print('neighbor')
+        print('----------')
+        print('ev {:.4f}\nhvp_e {:.4f}\nhvp_g {:.4f}'.format(
+            sum(all_new_evalue) / len(all_new_evalue),
+            sum(all_new_hvp_eigen) / len(all_new_hvp_eigen),
+            sum(all_new_hvp_grad) / len(all_new_hvp_grad),
+        ))
+
+        print('----------')
         output = 'ec '
         output += ' '.join('{:.4f}'.format(x) for x in all_new_evalue)
         output += '\nhvp_e '
@@ -510,6 +517,7 @@ class Spectrum:
         output += '\nhvp_g '
         output += ' '.join('{:.4f}'.format(x) for x in all_new_hvp_grad)
         print(output)
+        print()
         print()
         return VanillaGrad().explain(model, x)
 
