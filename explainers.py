@@ -19,37 +19,82 @@ def _kl_div(log_probs, probs):
     return kld / log_probs.shape[0]
 
 
-class Explainer:
+def get_input_grad(model, x, create_graph=False):
+    '''return input gradient in the same shape as the input'''
+    x.requires_grad_()
+    model.zero_grad()
+    logits = model(x)
+    y = logits.max(1)[1]
+    loss = F.cross_entropy(logits, y)
+    x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
+    # # weird loss from yulongwang12/visual-attribution
+    # grad_out = torch.zeros_like(output)
+    # grad_out.scatter_(1, y.unsqueeze(0).t(), 1.0)
+    # x_grad, = torch.autograd.grad(output, x,
+    #                               grad_outputs=grad_out,
+    #                               create_graph=create_graph)
+    return x_grad
 
-    def get_input_grad(self, x, output, y, create_graph=False,
-                       cross_entropy=True):
-        '''Compute gradient of loss w.r.t input x.
-        Args:
-            x (torch.Tensor):
-                Input tensor.
-            output (torch.Tensor):
-                Output before softmax.
-            y (torch.Tensor):
-                Class label.
-            create_graph:
-                Set to True if higher-order gradient will be used.
-            cross_entropy:
-                Use by default the cross entropy loss.
-        Rerturns:
-            torch.Tensor:
-                The gradient, shape identical to x.
-        '''
-        if cross_entropy:
-            loss = F.cross_entropy(output, y)
-            x_grad, = torch.autograd.grad(loss, x, create_graph=create_graph)
-        else:
-            '''weird loss from yulongwang12/visual-attribution'''
-            grad_out = torch.zeros_like(output)
-            grad_out.scatter_(1, y.unsqueeze(0).t(), 1.0)
-            x_grad, = torch.autograd.grad(output, x,
-                                          grad_outputs=grad_out,
-                                          create_graph=create_graph)
-        return x_grad
+
+'''replaced by top_k_eigen_things'''
+# def get_eigen_things(model, x, n_iter=10):
+#     x.requires_grad_()
+#     batch_size, n_chs, height, width = x.shape
+#     delta = torch.rand(batch_size, n_chs * height * width)
+#     delta = _l2_normalize(delta.sub(0.5)).cuda()
+#     for i in range(n_iter):
+#         model.zero_grad()
+#         logits = model(x)
+#         y = logits.max(1)[1]
+#         loss = F.cross_entropy(logits, y)
+#         x_grad, = torch.autograd.grad(loss, x, create_graph=True)
+#         x_grad = x_grad.view(batch_size, -1)
+#         hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
+#         hvp = hvp.view(batch_size, -1).detach()
+#         ev = (delta * hvp).sum(1)
+#         delta = _l2_normalize(hvp)
+#     return ev, delta
+
+
+def get_hvp(model, x, delta, get_grad=False):
+    '''return vector product of input hessian and delta in the shape of
+    (batch_size, -1)
+    '''
+    batch_size, n_chs, height, width = x.shape
+    x_grad = get_input_grad(model, x, create_graph=True)
+    x_grad = x_grad.view((batch_size, -1))
+    hvp, = torch.autograd.grad((x_grad * delta).sum(), x,
+                               create_graph=True)
+    hvp = hvp.view((batch_size, -1))
+    if get_grad:
+        return hvp, x_grad
+    else:
+        return hvp
+
+
+def top_k_eigen_things(model, x, top_k=10, n_iter=10):
+    '''get the top k eigenvalues and eigenvectors of the input hessian'''
+    x.requires_grad_()
+    batch_size, n_chs, height, width = x.shape
+    evalues = []
+    evectors = []
+    for k in range(top_k):
+        delta = torch.rand(batch_size, n_chs * height * width)
+        delta = _l2_normalize(delta.sub(0.5)).cuda()
+        for i in range(n_iter):
+            hvp = get_hvp(model, x, delta).detach()
+            for evalue, evec in zip(evalues, evectors):
+                hvp -= evalue * (evec * delta).sum() * evec
+            ev = (delta * hvp).sum(1)
+            delta = _l2_normalize(hvp)
+        evalues.append(ev)
+        evectors.append(delta)
+        # print(k, ev.cpu().numpy().tolist()[0])
+    # print()
+    return evalues, evectors
+
+
+class Explainer:
 
     def explain(self, model, x, y=None):
         '''Explain model prediction of y given x.
@@ -79,11 +124,7 @@ class VanillaGrad(Explainer):
         self.times_input = times_input
 
     def explain(self, model, x):
-        x.requires_grad_()
-        model.zero_grad()
-        logits = model(x)
-        y = logits.max(1)[1]
-        x_grad = self.get_input_grad(x, logits, y)
+        x_grad = get_input_grad(model, x)
         if self.times_input:
             x_grad *= x
         return x_grad.detach()
@@ -136,53 +177,6 @@ class VATExplainer:
             delta *= x
         return delta.detach()
 
-
-def get_eigen_things(model, x, n_iter=10):
-    x.requires_grad_()
-    batch_size, n_chs, height, width = x.shape
-    delta = torch.rand(batch_size, n_chs * height * width)
-    delta = _l2_normalize(delta.sub(0.5)).cuda()
-    for i in range(n_iter):
-        model.zero_grad()
-        logits = model(x)
-        y = logits.max(1)[1]
-        loss = F.cross_entropy(logits, y)
-        x_grad, = torch.autograd.grad(loss, x, create_graph=True)
-        x_grad = x_grad.view(batch_size, -1)
-        hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
-        hvp = hvp.view(batch_size, -1).detach()
-        ev = (delta * hvp).sum(1)
-        delta = _l2_normalize(hvp)
-    return ev, delta
-
-
-def top_k_eigen_things(model, x, top_k=10, n_iter=10):
-    x.requires_grad_()
-    batch_size, n_chs, height, width = x.shape
-    evalues = []
-    evectors = []
-    for k in range(top_k):
-        delta = torch.rand(batch_size, n_chs * height * width) 
-        delta = _l2_normalize(delta.sub(0.5)).cuda()
-        for i in range(n_iter):
-            model.zero_grad()
-            logits = model(x)
-            y = logits.max(1)[1]
-            loss = F.cross_entropy(logits, y)
-            x_grad, = torch.autograd.grad(loss, x, create_graph=True)
-            x_grad = x_grad.view(batch_size, -1)
-            hvp, = torch.autograd.grad((x_grad * delta).sum(), x)
-            hvp = hvp.view(batch_size, -1).detach()
-            for evalue, evec in zip(evalues, evectors):
-                hvp -= evalue * (evec * delta).sum() * evec
-            ev = (delta * hvp).sum(1)
-            delta = _l2_normalize(hvp)
-        evalues.append(ev)
-        evectors.append(delta)
-        print(k, ev.cpu().numpy().tolist()[0])
-    print()
-    return evalues, evectors
-        
 
 class CASO(Explainer):
 
@@ -240,15 +234,13 @@ class CASO(Explainer):
         if self.init == 'zero':
             delta = torch.zeros_like(x)
         elif self.init == 'grad':
-            model.zero_grad()
-            logits = model(x)
-            y = logits.max(1)[1]
-            delta = self.get_input_grad(x, logits, y).detach()
+            delta = get_input_grad(model, x).detach()
         elif self.init == 'random':
             delta = torch.rand(x.shape).sub(0.5).cuda()
             delta = _l2_normalize(delta)
         elif self.init == 'eig':
-            _, delta = get_eigen_things(model, x)
+            evals, evecs = top_k_eigen_things(model, x, top_k=1)
+            delta = evecs[0]
         delta = delta.view(batch_size, -1)
         delta = nn.Parameter(delta, requires_grad=True)
         return delta
@@ -262,14 +254,7 @@ class CASO(Explainer):
         elif self.optim == 'adam':
             optimizer = torch.optim.Adam([delta], lr=self.lr)
         for i in range(self.n_iter):
-            model.zero_grad()
-            logits = model(x)
-            y = logits.max(1)[1]
-            x_grad = self.get_input_grad(x, logits, y, create_graph=True)
-            x_grad = x_grad.view((batch_size, -1))
-            hvp, = torch.autograd.grad((x_grad * delta).sum(), x,
-                                       create_graph=True)
-            hvp = hvp.view((batch_size, -1))
+            hvp, x_grad = get_hvp(model, x, delta, get_grad=True)
             t1 = (x_grad * delta)
             t2 = 0.5 * (delta * hvp)
             l1 = F.l1_loss(delta, torch.zeros_like(delta), reduction='none')
@@ -325,10 +310,7 @@ class CASO(Explainer):
 #             optimizer = torch.optim.Adam([delta], lr=self.lr)
 #         self.history = defaultdict(list)
 #         for i in range(self.n_iter):
-#             model.zero_grad()
-#             logits = model(x)
-#             y = logits.max(1)[1]
-#             x_grad = self.get_input_grad(x, output, y, create_graph=True)
+#             x_grad = get_input_grad(model, x, create_graph=True)
 #             x_grad = x_grad.view((batch_size, -1))
 #             g = x_grad.detach().clone()
 #             hvp, = torch.autograd.grad(x_grad.dot(g).sum(), x,
@@ -373,7 +355,7 @@ class CASO(Explainer):
 #         return delta
 
 
-class IntegrateGrad(Explainer):
+class IntegratedGrad(Explainer):
     '''Integrated gradient. The final input multiplication is optional.
 
     See https://arxiv.org/abs/1703.01365.
@@ -386,11 +368,7 @@ class IntegrateGrad(Explainer):
         x.requires_grad_()
         delta = 0
         for alpha in np.arange(1 / self.n_iter, 1.0, 1 / self.n_iter):
-            model.zero_grad()
-            logits = model(x * alpha)
-            y = logits.max(1)[1]
-            g = self.get_input_grad(x, logits, y) * alpha
-            delta += g.detach()
+            delta += get_input_grad(model, x * alpha).detach()
         delta = delta / self.n_iter
         if self.times_input:
             delta *= x
@@ -455,46 +433,84 @@ class EigenCASO(CASO):
         super(EigenCASO, self).__init__(*args, **kwargs)
 
     def explain(self, model, x):
-        evalues, evectors = top_k_eigen_things(model, x)
+        evalues, evectors = top_k_eigen_things(model, x, top_k=1)
+        evalue = evalues[0]
+        self.lambda_l2 = evalue.unsqueeze(1) + 10
+        return super(EigenCASO, self).explain(model, x)
 
+
+class Spectrum:
+    '''Pseudo explainer to check the eigen things'''
+
+    def explain(self, model, x):
+        batch_size, n_chs, height, width = x.shape
+
+        evalues, evectors = top_k_eigen_things(model, x)
         evector = evectors[0]
         evalue = evalues[0]
 
-        batch_size, n_chs, height, width = x.shape
-        model.zero_grad()
-        logits = model(x)
-        y = logits.max(1)[1]
-        x_grad = self.get_input_grad(x, logits, y, create_graph=True)
-        x_grad = x_grad.view((batch_size, -1))
-        hvp_eigen, = torch.autograd.grad((x_grad * evector).sum(), x,
-                                         create_graph=True)
-        hvp_eigen = hvp_eigen.view((batch_size, -1))
+        hvp_eigen = get_hvp(model, x, evector)
 
-        model.zero_grad()
-        logits = model(x)
-        y = logits.max(1)[1]
-        x_grad = self.get_input_grad(x, logits, y, create_graph=True)
+        x_grad = get_input_grad(model, x, create_graph=True)
         x_grad = x_grad.view((batch_size, -1))
         grad = _l2_normalize(x_grad.detach())
         hvp_grad, = torch.autograd.grad((x_grad * grad).sum(), x,
                                         create_graph=True)
         hvp_grad = hvp_grad.view((batch_size, -1))
 
+        hvp_rands = []
+        for i in range(10):
+            rand = torch.rand(batch_size, n_chs * height * width)
+            rand = rand.sub(0.5).cuda()
+            hvp_rand = get_hvp(model, x, rand)
+            hvp_rands.append(hvp_rand)
+        hvp_rand = sum(hvp_rands) / len(hvp_rands)
+
         evalue = evalue.detach().cpu().numpy()
         hvp_eigen = hvp_eigen.detach().cpu().numpy()
         hvp_grad = hvp_grad.detach().cpu().numpy()
+        hvp_rand = hvp_rand.detach().cpu().numpy()
 
-        print('ev: {:.4f}\nhvp_e: {:.4f}\nhvp_g: {:.4f}'.format(
+        print('---------')
+        print('ev {:.4f}\nhvp_e {:.4f}\nhvp_g {:.4f}\nhvp_r {:.4f}'.format(
             evalue.tolist()[0],
             np.linalg.norm(hvp_eigen, 2).tolist(),
             np.linalg.norm(hvp_grad, 2).tolist(),
+            np.linalg.norm(hvp_rand, 2).tolist(),
         ))
-        print('---------')
+
+        '''neighbor'''
+        all_new_evalue = []
+        all_new_hvp_eigen = []
+        all_new_hvp_grad = []
+        for _ in range(10):
+            stdev_spread = 0.15
+            stdev = stdev_spread * (x.max() - x.min())
+            noise = torch.randn(x.shape).cuda() * stdev
+            new_x = noise + x.clone()
+
+            new_evalues, _ = top_k_eigen_things(model, new_x, top_k=1)
+            new_evalue = new_evalues[0]
+
+            new_hvp_eigen = get_hvp(model, new_x, evector)
+            new_hvp_grad = get_hvp(model, new_x, grad)
+
+            new_evalue = new_evalue.detach().cpu().numpy()
+            new_hvp_eigen = new_hvp_eigen.detach().cpu().numpy()
+            new_hvp_grad = new_hvp_grad.detach().cpu().numpy()
+            all_new_evalue.append(new_evalue.tolist()[0])
+            all_new_hvp_eigen.append(np.linalg.norm(new_hvp_eigen, 2).tolist())
+            all_new_hvp_grad.append(np.linalg.norm(new_hvp_grad, 2).tolist())
+
+        print('neighbor')
+        output = 'ec '
+        output += ' '.join('{:.4f}'.format(x) for x in all_new_evalue)
+        output += '\nhvp_e '
+        output += ' '.join('{:.4f}'.format(x) for x in all_new_hvp_eigen)
+        output += '\nhvp_g '
+        output += ' '.join('{:.4f}'.format(x) for x in all_new_hvp_grad)
+        print(output)
         print()
-
-        # self.lambda_l2 = evalue.unsqueeze(1) + 10
-        # return super(EigenCASO, self).explain(model, x)
-
         return VanillaGrad().explain(model, x)
 
 
@@ -677,7 +693,7 @@ class NewExplainer(Explainer):
         model.zero_grad()
         logits = model(x)
         y = logits.max(1)[1]
-        x_grad = self.get_input_grad(x, output, y).cpu().data
+        x_grad = get_input_grad(model, x).cpu().data
         x_grad = x_grad.view(-1, 1)
         newtons = HEV.transpose(0, 1).mm(x_grad)
 

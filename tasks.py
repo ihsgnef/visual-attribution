@@ -1,9 +1,7 @@
 import os
 import json
 import glob
-import pickle
 import numpy as np
-import pandas as pd
 from decimal import Decimal
 from scipy.stats import spearmanr
 from collections import defaultdict
@@ -14,9 +12,9 @@ import torchvision.transforms as transforms
 import viz
 import utils
 from explainers import CASO, \
-    VanillaGrad, IntegrateGrad, SmoothGrad, \
+    VanillaGrad, IntegratedGrad, SmoothGrad, \
     BatchTuner, SmoothCASO, EigenCASO, \
-    NewExplainer, VATExplainer
+    NewExplainer, VATExplainer, Spectrum
 from attackers import EmptyAttack, GhorbaniAttack, ScaledNoiseAttack
 from imagenet1000_clsid_to_human import clsid_to_human
 
@@ -426,8 +424,9 @@ def task_goose():
 def task_explain():
     model, batches, n_batches = setup_imagenet(batch_size=1, n_examples=40)
     explainers = [
-        ('Grad', VanillaGrad()),
-        ('EigenCASO', EigenCASO(lambda_l1=0, n_iter=60)),
+        ('G', VanillaGrad()),
+        ('Spectrum', Spectrum()),
+        # ('EigenCASO', EigenCASO(init='grad', lr=1e-2, lambda_l1=0, n_iter=60)),
     ]
     plot_explainer(model, batches, n_batches, explainers)
 
@@ -440,9 +439,9 @@ def task_explain_attack():
         ('Random', ScaledNoiseAttack()),
     ]
     explainers = [
-        ('Gradient', VanillaGrad()),
-        ('SmoothGrad', SmoothGrad()),
-        ('IntegratedGrad', IntegrateGrad()),
+        ('Grad', VanillaGrad()),
+        ('Smooth', SmoothGrad()),
+        ('Integrated', IntegratedGrad()),
     ]
     plot_explainer_attacker(model, batches, n_batches, attackers, explainers)
 
