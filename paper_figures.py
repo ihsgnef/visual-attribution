@@ -7,6 +7,14 @@ from viz import agg_clip
 
 
 def figure_2(example1, example2):
+    '''figure 2 compares CASO with CAFO on two examples, one with high
+    confidence and one with low confidence.
+    
+    each example should be a dictionary with the following entries
+    - image (PIL.Image.Image): the original image
+    - cafo (numpy.array): shape is (3, 224, 224)
+    - caso (numpy.array): shape is (3, 224, 224)
+    '''
     image1 = transforms.Resize((224, 224))(example1['image'])
     image2 = transforms.Resize((224, 224))(example2['image'])
     cafo1 = agg_clip(example1['cafo'])
@@ -28,6 +36,13 @@ def figure_2(example1, example2):
 
 
 def figure_3(examples, lambda1s):
+    '''figure 3 compares grad, cafo, and cafo with different sparsity.
+    each example should be a dictionary with all three heatmaps, using certain
+    lambda. each example should be a dictionary with the following entries:
+    - grad
+    - cafo
+    - caso
+    '''
     image = transforms.Resize((224, 224))(examples[0]['image'])
     rows = [[{'image': image}], [{'image': image}], [{'image': image}]]
     for example, lambda1 in zip(examples, lambda1s):
@@ -39,6 +54,14 @@ def figure_3(examples, lambda1s):
 
 
 def figure_4(regular_example, smooth_example):
+    '''figure 4 compares non-smooth and smooth version of gradient, integrated
+    gradient, cafo, and caso. each example should be a dictionary with the
+    following entries:
+    - grad
+    - integrated
+    - cafo
+    - caso
+    '''
     image = transforms.Resize((224, 224))(regular_example['image'])
     regular_row = [
         {'image': image, 'text_left': 'Regular'},
