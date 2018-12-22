@@ -1,6 +1,7 @@
 import os
 import json
 import glob
+import pickle
 import numpy as np
 from decimal import Decimal
 from scipy.stats import spearmanr
@@ -235,7 +236,7 @@ def plot_explainer(model, batches, n_batches, explainers,
                    folder='figures/explain'):
     os.makedirs(folder, exist_ok=True)
     results = explain(model, batches, explainers)
-    for id, example in results.items():
+    for i, (id, example) in enumerate(results.items()):
         image = transforms.Resize((224, 224))(example['image'])
         row = [{'image': image}]
         for explain_name, _ in explainers:
@@ -245,6 +246,14 @@ def plot_explainer(model, batches, n_batches, explainers,
                 'cmap': 'gray',
                 'text_top': explain_name,
             })
+        with open('placeholder_{}.pkl'.format(i), 'wb') as f:
+            example['id'] = id
+            example['cafo'] = example['Grad']['saliency_1']
+            example['caso'] = example['Grad']['saliency_1']
+            example['grad'] = example['Grad']['saliency_1']
+            example['integrated'] = example['Grad']['saliency_1']
+            example.pop('Grad')
+            pickle.dump(example, f)
         plot_matrix([row], f'{folder}/{id}.pdf', fontsize=15)
 
 
@@ -422,11 +431,11 @@ def task_goose():
 
 
 def task_explain():
-    model, batches, n_batches = setup_imagenet(batch_size=1, n_examples=40)
+    model, batches, n_batches = setup_imagenet(batch_size=1, n_examples=2)
     explainers = [
-        ('G', VanillaGrad()),
-        ('Spectrum', Spectrum()),
-        # ('EigenCASO', EigenCASO(init='grad', lr=1e-2, lambda_l1=0, n_iter=60)),
+        ('Grad', VanillaGrad()),
+        # ('Spectrum', Spectrum()),
+        # ('EigenCASO', EigenCASO(optim='adam', lambda_l1=0.1, n_iter=60)),
     ]
     plot_explainer(model, batches, n_batches, explainers)
 

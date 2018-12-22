@@ -211,8 +211,6 @@ class CASO(Explainer):
                 Learning rate.
             init:
                 Initialization method (zero, random, grad, vat).
-            normalize:
-                L2 normalize at the end of each iteration.
             times_input:
                 Whether to multiply input as postprocessing.
         '''
@@ -224,7 +222,6 @@ class CASO(Explainer):
         self.optim = optim.lower()
         self.lr = lr
         self.init = init
-        self.normalize = normalize
         self.times_input = times_input
         assert init in ['zero', 'random', 'grad', 'eig']
 
@@ -246,14 +243,7 @@ class CASO(Explainer):
         return delta
 
     def explain(self, model, x):
-        x.requires_grad_()
-        batch_size, n_chs, height, width = x.shape
-        delta = self.initialize_delta(model, x)
-        if self.optim == 'sgd':
-            optimizer = torch.optim.SGD([delta], lr=self.lr, momentum=0.9)
-        elif self.optim == 'adam':
-            optimizer = torch.optim.Adam([delta], lr=self.lr)
-        for i in range(self.n_iter):
+        def closure():
             hvp, x_grad = get_hvp(model, x, delta, get_grad=True)
             t1 = (x_grad * delta)
             t2 = 0.5 * (delta * hvp)
@@ -276,11 +266,26 @@ class CASO(Explainer):
                 l1.detach().cpu().numpy(),
                 l2.detach().cpu().numpy(),
             ))
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            if self.normalize:
-                delta = _l2_normalize(delta)
+            return loss
+
+        x.requires_grad_()
+        batch_size, n_chs, height, width = x.shape
+        delta = self.initialize_delta(model, x)
+        if self.optim == 'sgd':
+            optimizer = torch.optim.SGD([delta])
+        elif self.optim == 'adam':
+            optimizer = torch.optim.Adam([delta])
+        elif self.optim == 'lbfgs':
+            optimizer = torch.optim.LBFGS([delta])
+        if self.optim == 'lbfgs':
+            for i in range(self.n_iter):
+                optimizer.step(closure)
+        else:
+            for i in range(self.n_iter):
+                loss = closure()
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
         print()
         delta = delta.view((batch_size, n_chs, height, width))
         if self.times_input:
